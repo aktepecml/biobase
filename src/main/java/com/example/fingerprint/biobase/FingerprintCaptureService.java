@@ -43,39 +43,45 @@ public class FingerprintCaptureService {
     private final AtomicReference<CapturedData> lastPreview = new AtomicReference<>();
     private final AtomicReference<CapturedData> lastCapture = new AtomicReference<>();
     private final AtomicReference<CompletableFuture<CapturedData>> pendingCapture = new AtomicReference<>();
+    private final AtomicReference<CompletableFuture<CapturedData>> pendingPreview = new AtomicReference<>();
     private volatile String activeDeviceId;
 
-    private final BioBaseNative.PreviewCallback previewCallback = (deviceId, context, data) -> {
-        if (data != null) {
-            CapturedData preview = client.readData(deviceId, 0, data, 0);
-            if (preview.bytes().length > 0) {
-                lastPreview.set(preview);
-            }
-        }
-    };
-
-    private final BioBaseNative.AcquisitionStartedCallback startedCallback = (deviceId, context, reserved) -> {
-    };
-
-    private final BioBaseNative.AcquisitionCompletedCallback completedCallback = (deviceId, context, reserved) -> {
-    };
-
-    private final BioBaseNative.DataAvailableCallback dataAvailableCallback = (deviceId, context, dataStatus, data, detectedObjects) -> {
-        if (dataStatus >= 0 && data != null) {
-            CapturedData capture = client.readData(deviceId, dataStatus, data, detectedObjects);
-            if (capture.bytes().length > 0) {
-                lastCapture.set(capture);
-                CompletableFuture<CapturedData> future = pendingCapture.get();
-                if (future != null) {
-                    future.complete(capture);
-                }
-            }
-        }
-    };
+    private final BioBaseNative.PreviewCallback previewCallback;
+    private final BioBaseNative.AcquisitionStartedCallback startedCallback;
+    private final BioBaseNative.AcquisitionCompletedCallback completedCallback;
+    private final BioBaseNative.DataAvailableCallback dataAvailableCallback;
 
     public FingerprintCaptureService(BioBaseClient client, FingerprintProperties properties) {
         this.client = client;
         this.properties = properties;
+        this.previewCallback = (deviceId, context, data) -> {
+            if (data != null) {
+                CapturedData preview = client.readData(deviceId, 0, data, 0);
+                if (preview.bytes().length > 0) {
+                    lastPreview.set(preview);
+                    CompletableFuture<CapturedData> future = pendingPreview.get();
+                    if (future != null) {
+                        future.complete(preview);
+                    }
+                }
+            }
+        };
+        this.startedCallback = (deviceId, context, reserved) -> {
+        };
+        this.completedCallback = (deviceId, context, reserved) -> {
+        };
+        this.dataAvailableCallback = (deviceId, context, dataStatus, data, detectedObjects) -> {
+            if (dataStatus >= 0 && data != null) {
+                CapturedData capture = client.readData(deviceId, dataStatus, data, detectedObjects);
+                if (capture.bytes().length > 0) {
+                    lastCapture.set(capture);
+                    CompletableFuture<CapturedData> future = pendingCapture.get();
+                    if (future != null) {
+                        future.complete(capture);
+                    }
+                }
+            }
+        };
     }
 
     public void openSystem() {
@@ -124,6 +130,8 @@ public class FingerprintCaptureService {
         if (!pendingCapture.compareAndSet(null, future)) {
             throw new BioBaseException("Another capture is already running.");
         }
+        CompletableFuture<CapturedData> previewFuture = new CompletableFuture<>();
+        pendingPreview.set(previewFuture);
 
         try {
             configureCaptureProperties(deviceId, blankToDefault(impression, properties.getDefaultImpression()));
@@ -132,6 +140,7 @@ public class FingerprintCaptureService {
                     blankToDefault(position, properties.getDefaultPosition()),
                     blankToDefault(impression, properties.getDefaultImpression())
             );
+            savePreviewWhenAvailable(previewFuture);
             long timeout = timeoutSeconds == null ? properties.getCaptureTimeoutSeconds() : timeoutSeconds;
             CapturedData captured = future.get(timeout, TimeUnit.SECONDS);
             CapturedData saved = save(captured, "capture");
@@ -146,6 +155,7 @@ public class FingerprintCaptureService {
             throw new BioBaseException("Capture failed: " + e.getMessage());
         } finally {
             pendingCapture.compareAndSet(future, null);
+            pendingPreview.compareAndSet(previewFuture, null);
         }
     }
 
@@ -284,6 +294,19 @@ public class FingerprintCaptureService {
             client.setProperty(deviceId, propertyName, value);
         } catch (BioBaseException e) {
             log.warn("Could not set optional BioBase property {}={}: {}", propertyName, value, e.getMessage());
+        }
+    }
+
+    private void savePreviewWhenAvailable(CompletableFuture<CapturedData> previewFuture) {
+        try {
+            CapturedData preview = previewFuture.get(properties.getPreviewTimeoutSeconds(), TimeUnit.SECONDS);
+            CapturedData saved = save(preview, "preview");
+            lastPreview.set(saved);
+            log.info("Preview image saved to {}", saved.savedPath());
+        } catch (TimeoutException e) {
+            log.warn("No preview image arrived within {} seconds.", properties.getPreviewTimeoutSeconds());
+        } catch (Exception e) {
+            log.warn("Could not save preview image: {}", e.getMessage());
         }
     }
 

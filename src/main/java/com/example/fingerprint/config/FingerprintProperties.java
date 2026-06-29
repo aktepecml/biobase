@@ -20,6 +20,9 @@ public class FingerprintProperties {
     private String autoCaptureOverrideMode = "OnInsufficientQuality";
     private String previewImageFormat = "BMP";
     private String previewLevel = "Medium";
+    private long previewTimeoutSeconds = 5;
+    private boolean consoleRunnerEnabled = true;
+    private boolean consoleCloseWhenDone = false;
 
     public Path getOutputDir() {
         return outputDir;
@@ -139,5 +142,29 @@ public class FingerprintProperties {
 
     public void setPreviewLevel(String previewLevel) {
         this.previewLevel = previewLevel;
+    }
+
+    public long getPreviewTimeoutSeconds() {
+        return previewTimeoutSeconds;
+    }
+
+    public void setPreviewTimeoutSeconds(long previewTimeoutSeconds) {
+        this.previewTimeoutSeconds = previewTimeoutSeconds;
+    }
+
+    public boolean isConsoleRunnerEnabled() {
+        return consoleRunnerEnabled;
+    }
+
+    public void setConsoleRunnerEnabled(boolean consoleRunnerEnabled) {
+        this.consoleRunnerEnabled = consoleRunnerEnabled;
+    }
+
+    public boolean isConsoleCloseWhenDone() {
+        return consoleCloseWhenDone;
+    }
+
+    public void setConsoleCloseWhenDone(boolean consoleCloseWhenDone) {
+        this.consoleCloseWhenDone = consoleCloseWhenDone;
     }
 }

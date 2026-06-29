@@ -22,6 +22,28 @@ mvn spring-boot:run
 
 Varsayilan port: `8080`
 
+## Console Modu
+
+Varsayilan olarak uygulama acilinca console runner calisir:
+
+1. BioBase sistemini acar.
+2. Ilk cihazi bulup acar.
+3. Capture baslatir.
+4. Ilk preview callback'i gelince `captures/preview-...` dosyasina yazar.
+5. Final capture gelince `captures/capture-...` dosyasina yazar.
+
+REST controller uygulamada kalir. Console runner'i kapatmak istersen:
+
+```properties
+fingerprint.console-runner-enabled=false
+```
+
+Capture bittikten sonra cihazi ve BioBase sistemini otomatik kapatmak istersen:
+
+```properties
+fingerprint.console-close-when-done=true
+```
+
 ## Temel Akis
 
 ```bash
@@ -78,6 +100,9 @@ fingerprint.auto-capture-override-time=4000
 fingerprint.auto-capture-override-mode=OnInsufficientQuality
 fingerprint.preview-image-format=BMP
 fingerprint.preview-level=Medium
+fingerprint.preview-timeout-seconds=5
+fingerprint.console-runner-enabled=true
+fingerprint.console-close-when-done=false
 ```
 
 `ACTIVE_AREA`, `IMAGE_RESOLUTION`, `AUTOCONTRAST_ON`, preview format/level, spoof detection ve auto-capture override ayarlari capture oncesi uygulanir. Opsiyonel property'ler cihazda desteklenmiyorsa uygulama uyarı loglayip capture'a devam eder.

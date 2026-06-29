@@ -19,6 +19,12 @@ import org.springframework.stereotype.Service;
 
 @Service
 public class FingerprintCaptureService {
+    private static final String PROP_TRUE = "TRUE";
+    private static final String PROP_FALSE = "FALSE";
+    private static final String PROP_AUTOCAPTURE_SUPPORTED = "DEVICE_AUTOCAPTURE_SUPPORTED";
+    private static final String PROP_AUTOCAPTURE_ON = "AUTOCAPTURE_ON";
+    private static final String PROP_AUTOCAPTURE_NUM_RQD_OBJECTS = "AUTOCAPTURE_NUM_RQD_OBJECTS";
+
     private final BioBaseClient client;
     private final FingerprintProperties properties;
     private final AtomicReference<CapturedData> lastPreview = new AtomicReference<>();
@@ -107,6 +113,7 @@ public class FingerprintCaptureService {
         }
 
         try {
+            configureAutoCapture(deviceId);
             client.beginAcquisition(
                     deviceId,
                     blankToDefault(position, properties.getDefaultPosition()),
@@ -176,6 +183,30 @@ public class FingerprintCaptureService {
         client.registerCallback(deviceId, BioBaseEvent.BIOB_ACQUISITION_STARTED, null);
         client.registerCallback(deviceId, BioBaseEvent.BIOB_ACQUISITION_COMPLETED, null);
         client.registerCallback(deviceId, BioBaseEvent.BIOB_DATA_AVAILABLE, null);
+    }
+
+    private void configureAutoCapture(String deviceId) {
+        if (!properties.isAutoCaptureEnabled()) {
+            client.setProperty(deviceId, PROP_AUTOCAPTURE_ON, PROP_FALSE);
+            return;
+        }
+
+        String supported;
+        try {
+            supported = client.getProperty(deviceId, PROP_AUTOCAPTURE_SUPPORTED);
+        } catch (BioBaseException e) {
+            throw new BioBaseException("Could not check auto capture support: " + e.getMessage());
+        }
+
+        if (!PROP_TRUE.equalsIgnoreCase(supported.trim())) {
+            client.setProperty(deviceId, PROP_AUTOCAPTURE_ON, PROP_FALSE);
+            return;
+        }
+
+        client.setProperty(deviceId, PROP_AUTOCAPTURE_ON, PROP_TRUE);
+        if (properties.getAutoCaptureRequiredObjects() > 0) {
+            client.setProperty(deviceId, PROP_AUTOCAPTURE_NUM_RQD_OBJECTS, String.valueOf(properties.getAutoCaptureRequiredObjects()));
+        }
     }
 
     private CapturedData save(CapturedData data, String prefix) {

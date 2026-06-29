@@ -56,3 +56,17 @@ curl -X POST http://localhost:8080/api/fingerprint/system/close
 Capture dosyalari varsayilan olarak `captures/` klasorune yazilir.
 
 Not: SDK callback'i hangi formatta veri verirse uygulama onu kaydeder. Preview/capture BMP veya JPG gelirse dogrudan goruntu dosyasi olur; FIR gelirse ham ISO Fingerprint Image Record olarak `.fir` kaydedilir.
+
+## Auto Capture
+
+Capture baslamadan once uygulama cihazdan `DEVICE_AUTOCAPTURE_SUPPORTED` bilgisini okur. Destekleniyorsa:
+
+- `AUTOCAPTURE_ON=TRUE`
+- `AUTOCAPTURE_NUM_RQD_OBJECTS=1`
+
+set edilir. `application.properties` uzerinden degistirebilirsin:
+
+```properties
+fingerprint.auto-capture-enabled=true
+fingerprint.auto-capture-required-objects=1
+```

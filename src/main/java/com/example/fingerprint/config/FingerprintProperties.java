@@ -9,6 +9,8 @@ public class FingerprintProperties {
     private String defaultPosition = "RightIndex";
     private String defaultImpression = "FingerprintFlat";
     private long captureTimeoutSeconds = 30;
+    private boolean autoCaptureEnabled = true;
+    private int autoCaptureRequiredObjects = 1;
 
     public Path getOutputDir() {
         return outputDir;
@@ -40,5 +42,21 @@ public class FingerprintProperties {
 
     public void setCaptureTimeoutSeconds(long captureTimeoutSeconds) {
         this.captureTimeoutSeconds = captureTimeoutSeconds;
+    }
+
+    public boolean isAutoCaptureEnabled() {
+        return autoCaptureEnabled;
+    }
+
+    public void setAutoCaptureEnabled(boolean autoCaptureEnabled) {
+        this.autoCaptureEnabled = autoCaptureEnabled;
+    }
+
+    public int getAutoCaptureRequiredObjects() {
+        return autoCaptureRequiredObjects;
+    }
+
+    public void setAutoCaptureRequiredObjects(int autoCaptureRequiredObjects) {
+        this.autoCaptureRequiredObjects = autoCaptureRequiredObjects;
     }
 }

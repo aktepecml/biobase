@@ -2,12 +2,15 @@ package com.example.fingerprint.biobase;
 
 import com.example.fingerprint.api.CaptureResponse;
 import com.example.fingerprint.api.DeviceStatusResponse;
+import com.example.fingerprint.cmtfinger.CmtFingerNative;
+import com.example.fingerprint.cmtfinger.Cmt_finger_viewspec;
 import com.example.fingerprint.config.FingerprintProperties;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
+import java.util.Base64;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -15,9 +18,15 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
+
+import com.sun.jna.Pointer;
+import com.sun.jna.ptr.IntByReference;
+import com.sun.jna.ptr.PointerByReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+
+import static com.example.fingerprint.biobase.BioBaseDataFormat.BIOB_BMP;
 
 @Service
 public class FingerprintCaptureService {
@@ -201,6 +210,56 @@ public class FingerprintCaptureService {
         return toResponse(saved);
     }
 
+    private byte[] firToBmp(byte[] firData) {
+        PointerByReference rcfir = new PointerByReference();
+        int result = CmtFingerNative.INSTANCE.cmtfinger_create(rcfir);
+        if (result != 0) {
+            throw new RuntimeException("Record oluşturulamadı, hata: " + result);
+        }
+        Pointer cfir = rcfir.getValue();
+        try {
+            // FIR decode
+            result = CmtFingerNative.INSTANCE.cmtfinger_decode(cfir, firData, firData.length);
+            if (result != 0) {
+                throw new RuntimeException("FIR decode hatası: " + result);
+            }
+            // BMP encode
+            return encodeToBmp(cfir);
+        } finally {
+            CmtFingerNative.INSTANCE.cmtfinger_free(cfir);
+        }
+    }
+
+    private byte[] encodeToBmp(Pointer cfir) {
+
+        Cmt_finger_viewspec vs = new Cmt_finger_viewspec();
+        vs.position = -1;  // veya bilinen pozisyon
+        vs.impression = -2;
+        vs.write();
+
+        // Boyut al
+        IntByReference bmpLengthRef = new IntByReference(0);
+        int result = CmtFingerNative.INSTANCE.cmtfinger_encode_to_bmp(
+                cfir, vs, null, bmpLengthRef
+        );
+
+        if (result != 0) {
+            throw new RuntimeException("BMP boyut alınamadı: " + result);
+        }
+
+        // Veriyi al
+        byte[] bmpBuffer = new byte[bmpLengthRef.getValue()];
+        result = CmtFingerNative.INSTANCE.cmtfinger_encode_to_bmp(
+                cfir, vs, bmpBuffer, bmpLengthRef
+        );
+
+        if (result != 0) {
+            throw new RuntimeException("BMP encode hatası: " + result);
+        }
+
+        return bmpBuffer;
+    }
+
     private void unregisterCallbacks(String deviceId) {
         client.registerCallback(deviceId, BioBaseEvent.BIOB_PREVIEW, null);
         client.registerCallback(deviceId, BioBaseEvent.BIOB_ACQUISITION_STARTED, null);
@@ -300,7 +359,21 @@ public class FingerprintCaptureService {
     private void savePreviewWhenAvailable(CompletableFuture<CapturedData> previewFuture) {
         try {
             CapturedData preview = previewFuture.get(properties.getPreviewTimeoutSeconds(), TimeUnit.SECONDS);
-            CapturedData saved = save(preview, "preview");
+            byte[] bmpBytes = firToBmp(preview.bytes());
+
+            String base64String = Base64.getEncoder().encodeToString(bmpBytes);
+
+            CapturedData newCapturedData = new CapturedData(
+                    preview.deviceId(),
+                    BIOB_BMP,
+                    preview.finalImage(),
+                    preview.dataStatus(),
+                    preview.detectedObjects(),
+                    bmpBytes,                      // BMP byte array
+                    preview.savedPath(),
+                    preview.capturedAt()
+            );
+            CapturedData saved = save(newCapturedData, "preview");
             lastPreview.set(saved);
             log.info("Preview image saved to {}", saved.savedPath());
         } catch (TimeoutException e) {

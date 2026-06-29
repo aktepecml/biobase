@@ -15,15 +15,28 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 @Service
 public class FingerprintCaptureService {
+    private static final Logger log = LoggerFactory.getLogger(FingerprintCaptureService.class);
     private static final String PROP_TRUE = "TRUE";
     private static final String PROP_FALSE = "FALSE";
     private static final String PROP_AUTOCAPTURE_SUPPORTED = "DEVICE_AUTOCAPTURE_SUPPORTED";
     private static final String PROP_AUTOCAPTURE_ON = "AUTOCAPTURE_ON";
     private static final String PROP_AUTOCAPTURE_NUM_RQD_OBJECTS = "AUTOCAPTURE_NUM_RQD_OBJECTS";
+    private static final String PROP_AUTOCAPTURE_OVERRIDE_ON = "AUTOCAPTURE_OVERRIDE_ON";
+    private static final String PROP_AUTOCAPTURE_OVERRIDE_TIME = "AUTOCAPTURE_OVERRIDE_TIME";
+    private static final String PROP_AUTOCAPTURE_OVERRIDE_MODE = "AUTOCAPTURE_OVERRIDE_MODE";
+    private static final String PROP_AUTOCONTRAST_ON = "AUTOCONTRAST_ON";
+    private static final String PROP_IMAGE_RESOLUTION = "IMAGE_RESOLUTION";
+    private static final String PROP_ACTIVE_AREA = "ACTIVE_AREA";
+    private static final String PROP_SPOOF_DETECTION_ON = "SPOOF_DETECTION_ON";
+    private static final String PROP_SPOOF_DETECTION_SUPPORTED = "DEVICE_SPOOF_DETECTION_SUPPORTED";
+    private static final String PROP_PREVIEW_IMAGE_FORMAT = "PREVIEW_IMAGE_FORMAT";
+    private static final String PROP_PREVIEW_LEVEL = "PREVIEW_LEVEL";
 
     private final BioBaseClient client;
     private final FingerprintProperties properties;
@@ -113,7 +126,7 @@ public class FingerprintCaptureService {
         }
 
         try {
-            configureAutoCapture(deviceId);
+            configureCaptureProperties(deviceId, blankToDefault(impression, properties.getDefaultImpression()));
             client.beginAcquisition(
                     deviceId,
                     blankToDefault(position, properties.getDefaultPosition()),
@@ -185,9 +198,26 @@ public class FingerprintCaptureService {
         client.registerCallback(deviceId, BioBaseEvent.BIOB_DATA_AVAILABLE, null);
     }
 
+    private void configureCaptureProperties(String deviceId, String impression) {
+        configureCoreCaptureProperties(deviceId, impression);
+        configureAutoCapture(deviceId);
+        configureSpoofDetection(deviceId);
+        configurePreview(deviceId);
+    }
+
+    private void configureCoreCaptureProperties(String deviceId, String impression) {
+        setOptionalProperty(deviceId, PROP_ACTIVE_AREA, properties.getActiveArea());
+        setOptionalProperty(deviceId, PROP_IMAGE_RESOLUTION, properties.getImageResolution());
+
+        boolean flatCapture = "FingerprintFlat".equalsIgnoreCase(impression);
+        String autoContrast = properties.isAutoContrastEnabled() && flatCapture ? PROP_TRUE : PROP_FALSE;
+        setOptionalProperty(deviceId, PROP_AUTOCONTRAST_ON, autoContrast);
+    }
+
     private void configureAutoCapture(String deviceId) {
         if (!properties.isAutoCaptureEnabled()) {
             client.setProperty(deviceId, PROP_AUTOCAPTURE_ON, PROP_FALSE);
+            setOptionalProperty(deviceId, PROP_AUTOCAPTURE_OVERRIDE_ON, PROP_FALSE);
             return;
         }
 
@@ -200,12 +230,60 @@ public class FingerprintCaptureService {
 
         if (!PROP_TRUE.equalsIgnoreCase(supported.trim())) {
             client.setProperty(deviceId, PROP_AUTOCAPTURE_ON, PROP_FALSE);
+            setOptionalProperty(deviceId, PROP_AUTOCAPTURE_OVERRIDE_ON, PROP_FALSE);
             return;
         }
 
         client.setProperty(deviceId, PROP_AUTOCAPTURE_ON, PROP_TRUE);
         if (properties.getAutoCaptureRequiredObjects() > 0) {
             client.setProperty(deviceId, PROP_AUTOCAPTURE_NUM_RQD_OBJECTS, String.valueOf(properties.getAutoCaptureRequiredObjects()));
+        }
+
+        if (properties.isAutoCaptureOverrideEnabled()) {
+            setOptionalProperty(deviceId, PROP_AUTOCAPTURE_OVERRIDE_ON, PROP_TRUE);
+            setOptionalProperty(deviceId, PROP_AUTOCAPTURE_OVERRIDE_TIME, properties.getAutoCaptureOverrideTime());
+            setOptionalProperty(deviceId, PROP_AUTOCAPTURE_OVERRIDE_MODE, properties.getAutoCaptureOverrideMode());
+        } else {
+            setOptionalProperty(deviceId, PROP_AUTOCAPTURE_OVERRIDE_ON, PROP_FALSE);
+        }
+    }
+
+    private void configureSpoofDetection(String deviceId) {
+        if (!properties.isSpoofDetectionEnabled()) {
+            setOptionalProperty(deviceId, PROP_SPOOF_DETECTION_ON, PROP_FALSE);
+            return;
+        }
+
+        String supported = getOptionalProperty(deviceId, PROP_SPOOF_DETECTION_SUPPORTED).orElse(PROP_FALSE);
+        if (PROP_TRUE.equalsIgnoreCase(supported.trim())) {
+            setOptionalProperty(deviceId, PROP_SPOOF_DETECTION_ON, PROP_TRUE);
+        } else {
+            setOptionalProperty(deviceId, PROP_SPOOF_DETECTION_ON, PROP_FALSE);
+        }
+    }
+
+    private void configurePreview(String deviceId) {
+        setOptionalProperty(deviceId, PROP_PREVIEW_IMAGE_FORMAT, properties.getPreviewImageFormat());
+        setOptionalProperty(deviceId, PROP_PREVIEW_LEVEL, properties.getPreviewLevel());
+    }
+
+    private Optional<String> getOptionalProperty(String deviceId, String propertyName) {
+        try {
+            return Optional.ofNullable(client.getProperty(deviceId, propertyName));
+        } catch (BioBaseException e) {
+            log.warn("Could not read optional BioBase property {}: {}", propertyName, e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    private void setOptionalProperty(String deviceId, String propertyName, String value) {
+        if (value == null || value.isBlank()) {
+            return;
+        }
+        try {
+            client.setProperty(deviceId, propertyName, value);
+        } catch (BioBaseException e) {
+            log.warn("Could not set optional BioBase property {}={}: {}", propertyName, value, e.getMessage());
         }
     }
 

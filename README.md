@@ -69,4 +69,15 @@ set edilir. `application.properties` uzerinden degistirebilirsin:
 ```properties
 fingerprint.auto-capture-enabled=true
 fingerprint.auto-capture-required-objects=1
+fingerprint.auto-contrast-enabled=true
+fingerprint.image-resolution=500
+fingerprint.active-area=0 0 0 0
+fingerprint.spoof-detection-enabled=false
+fingerprint.auto-capture-override-enabled=false
+fingerprint.auto-capture-override-time=4000
+fingerprint.auto-capture-override-mode=OnInsufficientQuality
+fingerprint.preview-image-format=BMP
+fingerprint.preview-level=Medium
 ```
+
+`ACTIVE_AREA`, `IMAGE_RESOLUTION`, `AUTOCONTRAST_ON`, preview format/level, spoof detection ve auto-capture override ayarlari capture oncesi uygulanir. Opsiyonel property'ler cihazda desteklenmiyorsa uygulama uyarı loglayip capture'a devam eder.

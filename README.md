@@ -98,7 +98,8 @@ fingerprint.spoof-detection-enabled=false
 fingerprint.auto-capture-override-enabled=false
 fingerprint.auto-capture-override-time=4000
 fingerprint.auto-capture-override-mode=OnInsufficientQuality
-fingerprint.preview-image-format=BMP
+fingerprint.capture-timeout-seconds=0
+fingerprint.preview-image-format=
 fingerprint.preview-level=Medium
 fingerprint.preview-timeout-seconds=5
 fingerprint.live-preview-file-enabled=true
@@ -111,3 +112,5 @@ fingerprint.console-close-when-done=false
 `ACTIVE_AREA`, `IMAGE_RESOLUTION`, `AUTOCONTRAST_ON`, preview format/level, spoof detection ve auto-capture override ayarlari capture oncesi uygulanir. Opsiyonel property'ler cihazda desteklenmiyorsa uygulama uyarı loglayip capture'a devam eder.
 
 Live preview dosyasi callback thread'i icinde yazilmaz. Callback yalnizca native preview buffer'ini Java byte dizisine kopyalar; dosya yazma islemi ayri bir worker thread tarafindan yapilir. Bu, BioBase dokumanindaki callback thread'i icinden LSE/BioBase API cagrisi yapmama uyarisina uygun kalmak icindir.
+
+`fingerprint.capture-timeout-seconds=0` final capture gelene kadar bekler. Pozitif bir deger verirsen sure dolunca acquisition iptal edilir. `fingerprint.preview-image-format` varsayilan olarak bostur; cihazin `PREVIEW_IMAGE_FORMAT` property set etmeyi desteklediginden eminsen `BMP` veya `JPG` olarak acabilirsin.

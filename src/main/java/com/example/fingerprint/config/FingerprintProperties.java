@@ -8,7 +8,7 @@ public class FingerprintProperties {
     private Path outputDir = Path.of("captures");
     private String defaultPosition = "RightIndex";
     private String defaultImpression = "FingerprintFlat";
-    private long captureTimeoutSeconds = 30;
+    private long captureTimeoutSeconds = 0;
     private boolean autoCaptureEnabled = true;
     private int autoCaptureRequiredObjects = 1;
     private boolean autoContrastEnabled = true;
@@ -18,7 +18,7 @@ public class FingerprintProperties {
     private boolean autoCaptureOverrideEnabled = false;
     private String autoCaptureOverrideTime = "4000";
     private String autoCaptureOverrideMode = "OnInsufficientQuality";
-    private String previewImageFormat = "BMP";
+    private String previewImageFormat = "";
     private String previewLevel = "Medium";
     private long previewTimeoutSeconds = 5;
     private boolean livePreviewFileEnabled = true;

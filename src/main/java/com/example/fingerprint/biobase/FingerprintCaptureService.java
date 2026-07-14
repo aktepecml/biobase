@@ -159,7 +159,7 @@ public class FingerprintCaptureService {
                     blankToDefault(impression, properties.getDefaultImpression())
             );
             long timeout = timeoutSeconds == null ? properties.getCaptureTimeoutSeconds() : timeoutSeconds;
-            CapturedData captured = future.get(timeout, TimeUnit.SECONDS);
+            CapturedData captured = waitForCapture(future, timeout);
             CapturedData saved = save(captured, "capture");
             lastCapture.set(saved);
             return toResponse(saved);
@@ -174,6 +174,13 @@ public class FingerprintCaptureService {
             pendingCapture.compareAndSet(future, null);
             stopLivePreviewWriter();
         }
+    }
+
+    private CapturedData waitForCapture(CompletableFuture<CapturedData> future, long timeoutSeconds) throws Exception {
+        if (timeoutSeconds <= 0) {
+            return future.get();
+        }
+        return future.get(timeoutSeconds, TimeUnit.SECONDS);
     }
 
     public void cancel(String requestedDeviceId) {

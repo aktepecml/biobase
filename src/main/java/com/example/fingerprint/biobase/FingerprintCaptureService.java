@@ -15,13 +15,17 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import com.sun.jna.Pointer;
 import com.sun.jna.ptr.IntByReference;
 import com.sun.jna.ptr.PointerByReference;
+import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -52,8 +56,15 @@ public class FingerprintCaptureService {
     private final AtomicReference<CapturedData> lastPreview = new AtomicReference<>();
     private final AtomicReference<CapturedData> lastCapture = new AtomicReference<>();
     private final AtomicReference<CompletableFuture<CapturedData>> pendingCapture = new AtomicReference<>();
-    private final AtomicReference<CompletableFuture<CapturedData>> pendingPreview = new AtomicReference<>();
+    private final AtomicReference<CapturedData> livePreviewToWrite = new AtomicReference<>();
+    private final AtomicBoolean livePreviewWriterRunning = new AtomicBoolean(false);
+    private final ExecutorService previewWriter = Executors.newSingleThreadExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "biobase-live-preview-writer");
+        thread.setDaemon(true);
+        return thread;
+    });
     private volatile String activeDeviceId;
+    private volatile boolean livePreviewActive;
 
     private final BioBaseNative.PreviewCallback previewCallback;
     private final BioBaseNative.AcquisitionStartedCallback startedCallback;
@@ -68,9 +79,8 @@ public class FingerprintCaptureService {
                 CapturedData preview = client.readData(deviceId, 0, data, 0);
                 if (preview.bytes().length > 0) {
                     lastPreview.set(preview);
-                    CompletableFuture<CapturedData> future = pendingPreview.get();
-                    if (future != null) {
-                        future.complete(preview);
+                    if (livePreviewActive && properties.isLivePreviewFileEnabled()) {
+                        livePreviewToWrite.set(preview);
                     }
                 }
             }
@@ -139,17 +149,15 @@ public class FingerprintCaptureService {
         if (!pendingCapture.compareAndSet(null, future)) {
             throw new BioBaseException("Another capture is already running.");
         }
-        CompletableFuture<CapturedData> previewFuture = new CompletableFuture<>();
-        pendingPreview.set(previewFuture);
 
         try {
             configureCaptureProperties(deviceId, blankToDefault(impression, properties.getDefaultImpression()));
+            startLivePreviewWriter();
             client.beginAcquisition(
                     deviceId,
                     blankToDefault(position, properties.getDefaultPosition()),
                     blankToDefault(impression, properties.getDefaultImpression())
             );
-            savePreviewWhenAvailable(previewFuture);
             long timeout = timeoutSeconds == null ? properties.getCaptureTimeoutSeconds() : timeoutSeconds;
             CapturedData captured = future.get(timeout, TimeUnit.SECONDS);
             CapturedData saved = save(captured, "capture");
@@ -164,7 +172,7 @@ public class FingerprintCaptureService {
             throw new BioBaseException("Capture failed: " + e.getMessage());
         } finally {
             pendingCapture.compareAndSet(future, null);
-            pendingPreview.compareAndSet(previewFuture, null);
+            stopLivePreviewWriter();
         }
     }
 
@@ -380,6 +388,50 @@ public class FingerprintCaptureService {
             log.warn("No preview image arrived within {} seconds.", properties.getPreviewTimeoutSeconds());
         } catch (Exception e) {
             log.warn("Could not save preview image: {}", e.getMessage());
+    private void startLivePreviewWriter() {
+        if (!properties.isLivePreviewFileEnabled()) {
+            return;
+        }
+        livePreviewActive = true;
+        livePreviewToWrite.set(null);
+        if (!livePreviewWriterRunning.compareAndSet(false, true)) {
+            return;
+        }
+        previewWriter.execute(() -> {
+            try {
+                while (livePreviewActive || livePreviewToWrite.get() != null) {
+                    CapturedData preview = livePreviewToWrite.getAndSet(null);
+                    if (preview != null) {
+                        saveLivePreview(preview);
+                    }
+                    Thread.sleep(Math.max(25, properties.getLivePreviewWriteIntervalMillis()));
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            } catch (Exception e) {
+                log.warn("Live preview writer failed: {}", e.getMessage());
+            } finally {
+                livePreviewWriterRunning.set(false);
+                if (livePreviewActive) {
+                    startLivePreviewWriter();
+                }
+            }
+        });
+    }
+
+    private void stopLivePreviewWriter() {
+        livePreviewActive = false;
+    }
+
+    private void saveLivePreview(CapturedData data) {
+        try {
+            Files.createDirectories(properties.getOutputDir());
+            Path path = properties.getOutputDir()
+                    .resolve(properties.getLivePreviewFileName() + "." + data.format().extension())
+                    .toAbsolutePath();
+            Files.write(path, data.bytes());
+        } catch (IOException e) {
+            log.warn("Could not write live preview image: {}", e.getMessage());
         }
     }
 
@@ -429,5 +481,10 @@ public class FingerprintCaptureService {
                 data.bytes().length,
                 data.capturedAt()
         );
+    }
+
+    @PreDestroy
+    void shutdownPreviewWriter() {
+        previewWriter.shutdownNow();
     }
 }

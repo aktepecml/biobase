@@ -21,6 +21,9 @@ public class FingerprintProperties {
     private String previewImageFormat = "BMP";
     private String previewLevel = "Medium";
     private long previewTimeoutSeconds = 5;
+    private boolean livePreviewFileEnabled = true;
+    private String livePreviewFileName = "preview-live";
+    private long livePreviewWriteIntervalMillis = 250;
     private boolean consoleRunnerEnabled = true;
     private boolean consoleCloseWhenDone = false;
 
@@ -150,6 +153,30 @@ public class FingerprintProperties {
 
     public void setPreviewTimeoutSeconds(long previewTimeoutSeconds) {
         this.previewTimeoutSeconds = previewTimeoutSeconds;
+    }
+
+    public boolean isLivePreviewFileEnabled() {
+        return livePreviewFileEnabled;
+    }
+
+    public void setLivePreviewFileEnabled(boolean livePreviewFileEnabled) {
+        this.livePreviewFileEnabled = livePreviewFileEnabled;
+    }
+
+    public String getLivePreviewFileName() {
+        return livePreviewFileName;
+    }
+
+    public void setLivePreviewFileName(String livePreviewFileName) {
+        this.livePreviewFileName = livePreviewFileName;
+    }
+
+    public long getLivePreviewWriteIntervalMillis() {
+        return livePreviewWriteIntervalMillis;
+    }
+
+    public void setLivePreviewWriteIntervalMillis(long livePreviewWriteIntervalMillis) {
+        this.livePreviewWriteIntervalMillis = livePreviewWriteIntervalMillis;
     }
 
     public boolean isConsoleRunnerEnabled() {

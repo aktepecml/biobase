@@ -29,7 +29,7 @@ Varsayilan olarak uygulama acilinca console runner calisir:
 1. BioBase sistemini acar.
 2. Ilk cihazi bulup acar.
 3. Capture baslatir.
-4. Ilk preview callback'i gelince `captures/preview-...` dosyasina yazar.
+4. Capture bitene kadar son preview callback'ini `captures/preview-live.bmp` dosyasina periyodik olarak yazar.
 5. Final capture gelince `captures/capture-...` dosyasina yazar.
 
 REST controller uygulamada kalir. Console runner'i kapatmak istersen:
@@ -101,8 +101,13 @@ fingerprint.auto-capture-override-mode=OnInsufficientQuality
 fingerprint.preview-image-format=BMP
 fingerprint.preview-level=Medium
 fingerprint.preview-timeout-seconds=5
+fingerprint.live-preview-file-enabled=true
+fingerprint.live-preview-file-name=preview-live
+fingerprint.live-preview-write-interval-millis=250
 fingerprint.console-runner-enabled=true
 fingerprint.console-close-when-done=false
 ```
 
 `ACTIVE_AREA`, `IMAGE_RESOLUTION`, `AUTOCONTRAST_ON`, preview format/level, spoof detection ve auto-capture override ayarlari capture oncesi uygulanir. Opsiyonel property'ler cihazda desteklenmiyorsa uygulama uyarı loglayip capture'a devam eder.
+
+Live preview dosyasi callback thread'i icinde yazilmaz. Callback yalnizca native preview buffer'ini Java byte dizisine kopyalar; dosya yazma islemi ayri bir worker thread tarafindan yapilir. Bu, BioBase dokumanindaki callback thread'i icinden LSE/BioBase API cagrisi yapmama uyarisina uygun kalmak icindir.

@@ -388,6 +388,9 @@ public class FingerprintCaptureService {
             log.warn("No preview image arrived within {} seconds.", properties.getPreviewTimeoutSeconds());
         } catch (Exception e) {
             log.warn("Could not save preview image: {}", e.getMessage());
+        }
+    }
+
     private void startLivePreviewWriter() {
         if (!properties.isLivePreviewFileEnabled()) {
             return;

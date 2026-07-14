@@ -30,6 +30,7 @@ public class FingerprintConsoleRunner implements ApplicationRunner {
         String deviceId = null;
         try {
             log.info("Console runner started. Opening BioBase system.");
+            log.info("Capture output directory: {}", properties.getOutputDir().toAbsolutePath());
             service.openSystem();
 
             List<DeviceInfo> devices = service.devices();

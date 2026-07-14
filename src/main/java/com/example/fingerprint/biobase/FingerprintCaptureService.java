@@ -10,7 +10,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
-import java.util.Base64;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -22,6 +21,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
+import com.sun.jna.Memory;
 import com.sun.jna.Pointer;
 import com.sun.jna.ptr.IntByReference;
 import com.sun.jna.ptr.PointerByReference;
@@ -31,6 +31,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import static com.example.fingerprint.biobase.BioBaseDataFormat.BIOB_BMP;
+import static com.example.fingerprint.biobase.BioBaseDataFormat.BIOB_FIR;
 
 @Service
 public class FingerprintCaptureService {
@@ -58,6 +59,8 @@ public class FingerprintCaptureService {
     private final AtomicReference<CompletableFuture<CapturedData>> pendingCapture = new AtomicReference<>();
     private final AtomicReference<CapturedData> livePreviewToWrite = new AtomicReference<>();
     private final AtomicBoolean livePreviewWriterRunning = new AtomicBoolean(false);
+    private final AtomicBoolean previewSeenLogged = new AtomicBoolean(false);
+    private final AtomicBoolean livePreviewSavedLogged = new AtomicBoolean(false);
     private final ExecutorService previewWriter = Executors.newSingleThreadExecutor(runnable -> {
         Thread thread = new Thread(runnable, "biobase-live-preview-writer");
         thread.setDaemon(true);
@@ -78,6 +81,9 @@ public class FingerprintCaptureService {
             if (data != null) {
                 CapturedData preview = client.readData(deviceId, 0, data, 0);
                 if (preview.bytes().length > 0) {
+                    if (previewSeenLogged.compareAndSet(false, true)) {
+                        log.info("First preview received: format={}, bytes={}", preview.format(), preview.bytes().length);
+                    }
                     lastPreview.set(preview);
                     if (livePreviewActive && properties.isLivePreviewFileEnabled()) {
                         livePreviewToWrite.set(preview);
@@ -93,6 +99,8 @@ public class FingerprintCaptureService {
             if (dataStatus >= 0 && data != null) {
                 CapturedData capture = client.readData(deviceId, dataStatus, data, detectedObjects);
                 if (capture.bytes().length > 0) {
+                    log.info("Capture data received: format={}, bytes={}, detectedObjects={}",
+                            capture.format(), capture.bytes().length, capture.detectedObjects());
                     lastCapture.set(capture);
                     CompletableFuture<CapturedData> future = pendingCapture.get();
                     if (future != null) {
@@ -160,7 +168,7 @@ public class FingerprintCaptureService {
             );
             long timeout = timeoutSeconds == null ? properties.getCaptureTimeoutSeconds() : timeoutSeconds;
             CapturedData captured = waitForCapture(future, timeout);
-            CapturedData saved = save(captured, "capture");
+            CapturedData saved = saveAsImage(captured, "capture");
             lastCapture.set(saved);
             return toResponse(saved);
         } catch (TimeoutException e) {
@@ -239,22 +247,44 @@ public class FingerprintCaptureService {
                 throw new RuntimeException("FIR decode hatası: " + result);
             }
             // BMP encode
-            return encodeToBmp(cfir);
+            return encodeFirstViewToBmp(cfir);
         } finally {
             CmtFingerNative.INSTANCE.cmtfinger_free(cfir);
         }
     }
 
-    private byte[] encodeToBmp(Pointer cfir) {
+    private byte[] encodeFirstViewToBmp(Pointer cfir) {
+
+        Cmt_finger_viewspec query = new Cmt_finger_viewspec();
+        query.position = -1;
+        query.impression = -1;
+        query.write();
+
+        IntByReference numResults = new IntByReference(0);
+        int result = CmtFingerNative.INSTANCE.cmtfinger_query(cfir, query, null, numResults);
+        if (result != 0) {
+            throw new RuntimeException("FIR view query hatası: " + result);
+        }
+        if (numResults.getValue() <= 0) {
+            throw new RuntimeException("FIR içinde görüntü bulunamadı");
+        }
+
+        int viewSpecSize = query.size();
+        Memory results = new Memory((long) numResults.getValue() * viewSpecSize);
+        result = CmtFingerNative.INSTANCE.cmtfinger_query(cfir, query, results, numResults);
+        if (result != 0) {
+            throw new RuntimeException("FIR view result hatası: " + result);
+        }
 
         Cmt_finger_viewspec vs = new Cmt_finger_viewspec();
-        vs.position = -1;  // veya bilinen pozisyon
-        vs.impression = -2;
+        vs.position = results.getInt(0);
+        vs.impression = results.getInt(4);
+        vs.quality = results.getInt(8);
         vs.write();
 
         // Boyut al
         IntByReference bmpLengthRef = new IntByReference(0);
-        int result = CmtFingerNative.INSTANCE.cmtfinger_encode_to_bmp(
+        result = CmtFingerNative.INSTANCE.cmtfinger_encode_to_bmp(
                 cfir, vs, null, bmpLengthRef
         );
 
@@ -371,37 +401,12 @@ public class FingerprintCaptureService {
         }
     }
 
-    private void savePreviewWhenAvailable(CompletableFuture<CapturedData> previewFuture) {
-        try {
-            CapturedData preview = previewFuture.get(properties.getPreviewTimeoutSeconds(), TimeUnit.SECONDS);
-            byte[] bmpBytes = firToBmp(preview.bytes());
-
-            String base64String = Base64.getEncoder().encodeToString(bmpBytes);
-
-            CapturedData newCapturedData = new CapturedData(
-                    preview.deviceId(),
-                    BIOB_BMP,
-                    preview.finalImage(),
-                    preview.dataStatus(),
-                    preview.detectedObjects(),
-                    bmpBytes,                      // BMP byte array
-                    preview.savedPath(),
-                    preview.capturedAt()
-            );
-            CapturedData saved = save(newCapturedData, "preview");
-            lastPreview.set(saved);
-            log.info("Preview image saved to {}", saved.savedPath());
-        } catch (TimeoutException e) {
-            log.warn("No preview image arrived within {} seconds.", properties.getPreviewTimeoutSeconds());
-        } catch (Exception e) {
-            log.warn("Could not save preview image: {}", e.getMessage());
-        }
-    }
-
     private void startLivePreviewWriter() {
         if (!properties.isLivePreviewFileEnabled()) {
             return;
         }
+        previewSeenLogged.set(false);
+        livePreviewSavedLogged.set(false);
         livePreviewActive = true;
         livePreviewToWrite.set(null);
         if (!livePreviewWriterRunning.compareAndSet(false, true)) {
@@ -435,13 +440,44 @@ public class FingerprintCaptureService {
 
     private void saveLivePreview(CapturedData data) {
         try {
+            CapturedData image = toImageData(data);
             Files.createDirectories(properties.getOutputDir());
             Path path = properties.getOutputDir()
-                    .resolve(properties.getLivePreviewFileName() + "." + data.format().extension())
+                    .resolve(properties.getLivePreviewFileName() + "." + image.format().extension())
                     .toAbsolutePath();
-            Files.write(path, data.bytes());
-        } catch (IOException e) {
+            Files.write(path, image.bytes());
+            if (livePreviewSavedLogged.compareAndSet(false, true)) {
+                log.info("Live preview image is being updated at {}", path);
+            }
+        } catch (Exception e) {
             log.warn("Could not write live preview image: {}", e.getMessage());
+        }
+    }
+
+    private CapturedData saveAsImage(CapturedData data, String prefix) {
+        return save(toImageData(data), prefix);
+    }
+
+    private CapturedData toImageData(CapturedData data) {
+        if (data.format() != BIOB_FIR) {
+            return data;
+        }
+
+        try {
+            byte[] bmpBytes = firToBmp(data.bytes());
+            return new CapturedData(
+                    data.deviceId(),
+                    BIOB_BMP,
+                    data.finalImage(),
+                    data.dataStatus(),
+                    data.detectedObjects(),
+                    bmpBytes,
+                    data.savedPath(),
+                    data.capturedAt()
+            );
+        } catch (Exception e) {
+            log.warn("Could not convert FIR to BMP, saving raw FIR data instead: {}", e.getMessage());
+            return data;
         }
     }
 
@@ -451,6 +487,7 @@ public class FingerprintCaptureService {
             String timestamp = DateTimeFormatter.ISO_INSTANT.format(Instant.now()).replace(':', '-');
             Path path = properties.getOutputDir().resolve(prefix + "-" + timestamp + "." + data.format().extension()).toAbsolutePath();
             Files.write(path, data.bytes());
+            log.info("Saved {} data to {}", prefix, path);
             return new CapturedData(
                     data.deviceId(),
                     data.format(),

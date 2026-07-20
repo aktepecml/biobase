@@ -84,4 +84,44 @@ public interface BioBaseNative extends StdCallLibrary {
             return List.of("buffer", "bufferSize", "formatType", "finalImage", "extStruct", "structName");
         }
     }
+
+    class BioBROI extends Structure {
+        public int x;
+        public int y;
+        public int width;
+        public int height;
+
+        public BioBROI() {
+            super();
+        }
+
+        public BioBROI(Pointer pointer) {
+            super(pointer);
+            read();
+        }
+
+        @Override
+        protected List<String> getFieldOrder() {
+            return List.of("x", "y", "width", "height");
+        }
+    }
+
+    class BioBScene extends Structure {
+        public Pointer raster;
+        public int width;
+        public int height;
+        public int sceneIndex;
+        public int numDetected;
+        public Pointer biometricObjects;
+
+        public BioBScene(Pointer pointer) {
+            super(pointer);
+            read();
+        }
+
+        @Override
+        protected List<String> getFieldOrder() {
+            return List.of("raster", "width", "height", "sceneIndex", "numDetected", "biometricObjects");
+        }
+    }
 }

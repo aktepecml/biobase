@@ -1,6 +1,7 @@
 package com.example.fingerprint.api;
 
 import java.time.Instant;
+import java.util.List;
 
 public record CaptureResponse(
         String deviceId,
@@ -9,7 +10,19 @@ public record CaptureResponse(
         int dataStatus,
         int detectedObjects,
         String savedPath,
+        String annotatedPath,
+        int segmentImageWidth,
+        int segmentImageHeight,
+        List<SegmentResponse> segments,
         int byteCount,
         Instant capturedAt
 ) {
+    public record SegmentResponse(
+            int index,
+            int x,
+            int y,
+            int width,
+            int height
+    ) {
+    }
 }

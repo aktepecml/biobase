@@ -5,6 +5,11 @@ import com.example.fingerprint.api.DeviceStatusResponse;
 import com.example.fingerprint.cmtfinger.CmtFingerNative;
 import com.example.fingerprint.cmtfinger.Cmt_finger_viewspec;
 import com.example.fingerprint.config.FingerprintProperties;
+import java.awt.BasicStroke;
+import java.awt.Color;
+import java.awt.Graphics2D;
+import java.awt.RenderingHints;
+import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -20,6 +25,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import javax.imageio.ImageIO;
 
 import com.sun.jna.Memory;
 import com.sun.jna.Pointer;
@@ -55,6 +61,7 @@ public class FingerprintCaptureService {
     private final BioBaseClient client;
     private final FingerprintProperties properties;
     private final AtomicReference<CapturedData> lastPreview = new AtomicReference<>();
+    private final AtomicReference<FingerSegmentation> lastPreviewSegmentation = new AtomicReference<>(FingerSegmentation.empty());
     private final AtomicReference<CapturedData> lastCapture = new AtomicReference<>();
     private final AtomicReference<CompletableFuture<CapturedData>> pendingCapture = new AtomicReference<>();
     private final AtomicReference<CapturedData> livePreviewToWrite = new AtomicReference<>();
@@ -79,6 +86,7 @@ public class FingerprintCaptureService {
         this.properties = properties;
         this.previewCallback = (deviceId, context, data) -> {
             if (data != null) {
+                lastPreviewSegmentation.set(readPreviewSegmentation(data));
                 CapturedData preview = client.readData(deviceId, 0, data, 0);
                 if (preview.bytes().length > 0) {
                     if (previewSeenLogged.compareAndSet(false, true)) {
@@ -168,9 +176,11 @@ public class FingerprintCaptureService {
             );
             long timeout = timeoutSeconds == null ? properties.getCaptureTimeoutSeconds() : timeoutSeconds;
             CapturedData captured = waitForCapture(future, timeout);
+            FingerSegmentation segmentation = lastPreviewSegmentation.get();
             CapturedData saved = saveAsImage(captured, "capture");
+            Path annotatedPath = saveAnnotatedCapture(saved, segmentation);
             lastCapture.set(saved);
-            return toResponse(saved);
+            return toResponse(saved, segmentation, annotatedPath);
         } catch (TimeoutException e) {
             client.cancelAcquisition(deviceId);
             throw new BioBaseException("Capture timed out before final fingerprint data arrived.");
@@ -247,14 +257,14 @@ public class FingerprintCaptureService {
                 throw new RuntimeException("FIR decode hatası: " + result);
             }
             // BMP encode
-            return encodeFirstViewToBmp(cfir);
+            List<Cmt_finger_viewspec> views = queryViews(cfir);
+            return encodeViewToBmp(cfir, views.get(0));
         } finally {
             CmtFingerNative.INSTANCE.cmtfinger_free(cfir);
         }
     }
 
-    private byte[] encodeFirstViewToBmp(Pointer cfir) {
-
+    private List<Cmt_finger_viewspec> queryViews(Pointer cfir) {
         Cmt_finger_viewspec query = new Cmt_finger_viewspec();
         query.position = -1;
         query.impression = -1;
@@ -269,22 +279,30 @@ public class FingerprintCaptureService {
             throw new RuntimeException("FIR içinde görüntü bulunamadı");
         }
 
+        int count = numResults.getValue();
         int viewSpecSize = query.size();
-        Memory results = new Memory((long) numResults.getValue() * viewSpecSize);
+        Memory results = new Memory((long) count * viewSpecSize);
         result = CmtFingerNative.INSTANCE.cmtfinger_query(cfir, query, results, numResults);
         if (result != 0) {
             throw new RuntimeException("FIR view result hatası: " + result);
         }
 
-        Cmt_finger_viewspec vs = new Cmt_finger_viewspec();
-        vs.position = results.getInt(0);
-        vs.impression = results.getInt(4);
-        vs.quality = results.getInt(8);
-        vs.write();
+        java.util.ArrayList<Cmt_finger_viewspec> views = new java.util.ArrayList<>();
+        for (int index = 0; index < count; index++) {
+            long offset = (long) index * viewSpecSize;
+            Cmt_finger_viewspec view = new Cmt_finger_viewspec();
+            view.position = results.getInt(offset);
+            view.impression = results.getInt(offset + Integer.BYTES);
+            view.quality = results.getInt(offset + (2L * Integer.BYTES));
+            view.write();
+            views.add(view);
+        }
+        return views;
+    }
 
-        // Boyut al
+    private byte[] encodeViewToBmp(Pointer cfir, Cmt_finger_viewspec vs) {
         IntByReference bmpLengthRef = new IntByReference(0);
-        result = CmtFingerNative.INSTANCE.cmtfinger_encode_to_bmp(
+        int result = CmtFingerNative.INSTANCE.cmtfinger_encode_to_bmp(
                 cfir, vs, null, bmpLengthRef
         );
 
@@ -303,6 +321,41 @@ public class FingerprintCaptureService {
         }
 
         return bmpBuffer;
+    }
+
+    private FingerSegmentation readPreviewSegmentation(Pointer data) {
+        try {
+            BioBaseNative.BioBData nativeData = new BioBaseNative.BioBData(data);
+            if (nativeData.extStruct == null || Pointer.nativeValue(nativeData.extStruct) == 0) {
+                return FingerSegmentation.empty();
+            }
+
+            BioBaseNative.BioBScene scene = new BioBaseNative.BioBScene(nativeData.extStruct);
+            if (scene.numDetected <= 0 || scene.biometricObjects == null || Pointer.nativeValue(scene.biometricObjects) == 0) {
+                return new FingerSegmentation(scene.width, scene.height, List.of());
+            }
+
+            int roiSize = new BioBaseNative.BioBROI().size();
+            java.util.ArrayList<FingerSegment> segments = new java.util.ArrayList<>();
+            for (int index = 0; index < scene.numDetected; index++) {
+                BioBaseNative.BioBROI roi = new BioBaseNative.BioBROI(scene.biometricObjects.share((long) index * roiSize));
+                segments.add(new FingerSegment(
+                        index + 1,
+                        roi.x,
+                        roi.y,
+                        roi.width,
+                        roi.height
+                ));
+            }
+
+            FingerSegmentation segmentation = new FingerSegmentation(scene.width, scene.height, List.copyOf(segments));
+            log.info("Preview segmentation received: image={}x{}, segments={}",
+                    segmentation.imageWidth(), segmentation.imageHeight(), segmentation.segments().size());
+            return segmentation;
+        } catch (Exception e) {
+            log.warn("Could not read preview segmentation coordinates: {}", e.getMessage());
+            return FingerSegmentation.empty();
+        }
     }
 
     private void unregisterCallbacks(String deviceId) {
@@ -484,8 +537,7 @@ public class FingerprintCaptureService {
     private CapturedData save(CapturedData data, String prefix) {
         try {
             Files.createDirectories(properties.getOutputDir());
-            String timestamp = DateTimeFormatter.ISO_INSTANT.format(Instant.now()).replace(':', '-');
-            Path path = properties.getOutputDir().resolve(prefix + "-" + timestamp + "." + data.format().extension()).toAbsolutePath();
+            Path path = properties.getOutputDir().resolve(prefix + "-" + timestamp() + "." + data.format().extension()).toAbsolutePath();
             Files.write(path, data.bytes());
             log.info("Saved {} data to {}", prefix, path);
             return new CapturedData(
@@ -500,6 +552,50 @@ public class FingerprintCaptureService {
             );
         } catch (IOException e) {
             throw new BioBaseException("Could not save data: " + e.getMessage());
+        }
+    }
+
+    private Path saveAnnotatedCapture(CapturedData data, FingerSegmentation segmentation) {
+        if (data.savedPath() == null || segmentation.segments().isEmpty()) {
+            return null;
+        }
+
+        try {
+            BufferedImage source = ImageIO.read(data.savedPath().toFile());
+            if (source == null) {
+                log.warn("Could not create annotated capture image: unsupported image format at {}", data.savedPath());
+                return null;
+            }
+
+            BufferedImage annotated = new BufferedImage(source.getWidth(), source.getHeight(), BufferedImage.TYPE_INT_RGB);
+            Graphics2D graphics = annotated.createGraphics();
+            try {
+                graphics.drawImage(source, 0, 0, null);
+                graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                graphics.setColor(Color.RED);
+                graphics.setStroke(new BasicStroke(Math.max(2f, Math.min(source.getWidth(), source.getHeight()) / 250f)));
+
+                double scaleX = segmentation.imageWidth() > 0 ? (double) source.getWidth() / segmentation.imageWidth() : 1.0;
+                double scaleY = segmentation.imageHeight() > 0 ? (double) source.getHeight() / segmentation.imageHeight() : 1.0;
+
+                for (FingerSegment segment : segmentation.segments()) {
+                    int x = clamp((int) Math.round(segment.x() * scaleX), 0, source.getWidth() - 1);
+                    int y = clamp((int) Math.round(segment.y() * scaleY), 0, source.getHeight() - 1);
+                    int width = clamp((int) Math.round(segment.width() * scaleX), 1, source.getWidth() - x);
+                    int height = clamp((int) Math.round(segment.height() * scaleY), 1, source.getHeight() - y);
+                    graphics.drawRect(x, y, width, height);
+                }
+            } finally {
+                graphics.dispose();
+            }
+
+            Path path = annotatedPath(data.savedPath());
+            ImageIO.write(annotated, "png", path.toFile());
+            log.info("Saved annotated capture image to {}", path);
+            return path;
+        } catch (Exception e) {
+            log.warn("Could not create annotated capture image: {}", e.getMessage());
+            return null;
         }
     }
 
@@ -518,6 +614,10 @@ public class FingerprintCaptureService {
     }
 
     private static CaptureResponse toResponse(CapturedData data) {
+        return toResponse(data, FingerSegmentation.empty(), null);
+    }
+
+    private static CaptureResponse toResponse(CapturedData data, FingerSegmentation segmentation, Path annotatedPath) {
         return new CaptureResponse(
                 data.deviceId(),
                 data.format().name(),
@@ -525,9 +625,36 @@ public class FingerprintCaptureService {
                 data.dataStatus(),
                 data.detectedObjects(),
                 data.savedPath() == null ? null : data.savedPath().toString(),
+                annotatedPath == null ? null : annotatedPath.toString(),
+                segmentation.imageWidth(),
+                segmentation.imageHeight(),
+                segmentation.segments().stream()
+                        .map(segment -> new CaptureResponse.SegmentResponse(
+                                segment.index(),
+                                segment.x(),
+                                segment.y(),
+                                segment.width(),
+                                segment.height()
+                        ))
+                        .toList(),
                 data.bytes().length,
                 data.capturedAt()
         );
+    }
+
+    private static Path annotatedPath(Path capturePath) {
+        String fileName = capturePath.getFileName().toString();
+        int extensionStart = fileName.lastIndexOf('.');
+        String baseName = extensionStart < 0 ? fileName : fileName.substring(0, extensionStart);
+        return capturePath.resolveSibling(baseName + "-annotated.png").toAbsolutePath();
+    }
+
+    private static int clamp(int value, int min, int max) {
+        return Math.max(min, Math.min(max, value));
+    }
+
+    private static String timestamp() {
+        return DateTimeFormatter.ISO_INSTANT.format(Instant.now()).replace(':', '-');
     }
 
     @PreDestroy

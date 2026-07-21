@@ -178,6 +178,9 @@ public class FingerprintCaptureService {
             CapturedData captured = waitForCapture(future, timeout);
             FingerSegmentation segmentation = lastPreviewSegmentation.get();
             CapturedData saved = saveAsImage(captured, "capture");
+            if (segmentation.segments().isEmpty()) {
+                segmentation = detectSegmentsFromCaptureImage(saved, captured.detectedObjects());
+            }
             Path annotatedPath = saveAnnotatedCapture(saved, segmentation);
             lastCapture.set(saved);
             return toResponse(saved, segmentation, annotatedPath);
@@ -327,6 +330,7 @@ public class FingerprintCaptureService {
         try {
             BioBaseNative.BioBData nativeData = new BioBaseNative.BioBData(data);
             if (nativeData.extStruct == null || Pointer.nativeValue(nativeData.extStruct) == 0) {
+                log.debug("Preview segmentation extStruct is not available for format={}", BioBaseDataFormat.fromValue(nativeData.formatType));
                 return FingerSegmentation.empty();
             }
 
@@ -356,6 +360,206 @@ public class FingerprintCaptureService {
             log.warn("Could not read preview segmentation coordinates: {}", e.getMessage());
             return FingerSegmentation.empty();
         }
+    }
+
+    private FingerSegmentation detectSegmentsFromCaptureImage(CapturedData data, int expectedCount) {
+        if (data.savedPath() == null) {
+            return FingerSegmentation.empty();
+        }
+
+        try {
+            BufferedImage image = ImageIO.read(data.savedPath().toFile());
+            if (image == null) {
+                log.warn("Image segmentation skipped: unsupported image format at {}", data.savedPath());
+                return FingerSegmentation.empty();
+            }
+
+            List<FingerSegment> segments = detectFingerprintBands(image, expectedCount);
+            if (segments.isEmpty()) {
+                log.warn("Image segmentation found no finger regions in {}", data.savedPath());
+                return FingerSegmentation.empty();
+            }
+
+            log.info("Image segmentation detected {} segment(s) on capture image {}x{}",
+                    segments.size(), image.getWidth(), image.getHeight());
+            return new FingerSegmentation(image.getWidth(), image.getHeight(), segments);
+        } catch (Exception e) {
+            log.warn("Image segmentation skipped: {}", e.getMessage());
+            return FingerSegmentation.empty();
+        }
+    }
+
+    private List<FingerSegment> detectFingerprintBands(BufferedImage image, int expectedCount) {
+        int width = image.getWidth();
+        int height = image.getHeight();
+        int threshold = otsuThreshold(image);
+        int[] columnCounts = new int[width];
+        boolean[][] darkPixels = new boolean[width][height];
+
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                int luminance = luminance(image.getRGB(x, y));
+                boolean dark = luminance <= threshold;
+                darkPixels[x][y] = dark;
+                if (dark) {
+                    columnCounts[x]++;
+                }
+            }
+        }
+
+        int[] smoothed = smooth(columnCounts, Math.max(2, width / 250));
+        int activeThreshold = Math.max(8, height / 120);
+        boolean[] activeColumns = new boolean[width];
+        for (int x = 0; x < width; x++) {
+            activeColumns[x] = smoothed[x] >= activeThreshold;
+        }
+
+        List<int[]> ranges = columnRanges(activeColumns, Math.max(3, width / 120), Math.max(12, width / 80));
+        java.util.ArrayList<FingerSegment> candidates = new java.util.ArrayList<>();
+        for (int[] range : ranges) {
+            FingerSegment segment = boundsForRange(candidates.size() + 1, darkPixels, range[0], range[1], width, height);
+            if (segment.width() >= Math.max(10, width / 120) && segment.height() >= Math.max(20, height / 20)) {
+                candidates.add(segment);
+            }
+        }
+
+        if (candidates.isEmpty()) {
+            FingerSegment fullBounds = boundsForRange(1, darkPixels, 0, width - 1, width, height);
+            if (fullBounds.width() > 1 && fullBounds.height() > 1) {
+                candidates.add(fullBounds);
+            }
+        }
+
+        int limit = expectedCount > 0 ? expectedCount : candidates.size();
+        if (candidates.size() > limit) {
+            candidates.sort((left, right) -> Integer.compare(area(right), area(left)));
+            candidates = new java.util.ArrayList<>(candidates.subList(0, limit));
+        }
+
+        candidates.sort((left, right) -> Integer.compare(left.x(), right.x()));
+        java.util.ArrayList<FingerSegment> indexed = new java.util.ArrayList<>();
+        for (int index = 0; index < candidates.size(); index++) {
+            FingerSegment segment = candidates.get(index);
+            indexed.add(new FingerSegment(index + 1, segment.x(), segment.y(), segment.width(), segment.height()));
+        }
+        return List.copyOf(indexed);
+    }
+
+    private static int otsuThreshold(BufferedImage image) {
+        int[] histogram = new int[256];
+        int width = image.getWidth();
+        int height = image.getHeight();
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                histogram[luminance(image.getRGB(x, y))]++;
+            }
+        }
+
+        int total = width * height;
+        long sum = 0;
+        for (int level = 0; level < histogram.length; level++) {
+            sum += (long) level * histogram[level];
+        }
+
+        long backgroundSum = 0;
+        int backgroundWeight = 0;
+        double maxVariance = -1;
+        int threshold = 127;
+        for (int level = 0; level < histogram.length; level++) {
+            backgroundWeight += histogram[level];
+            if (backgroundWeight == 0) {
+                continue;
+            }
+
+            int foregroundWeight = total - backgroundWeight;
+            if (foregroundWeight == 0) {
+                break;
+            }
+
+            backgroundSum += (long) level * histogram[level];
+            double backgroundMean = (double) backgroundSum / backgroundWeight;
+            double foregroundMean = (double) (sum - backgroundSum) / foregroundWeight;
+            double variance = (double) backgroundWeight * foregroundWeight
+                    * (backgroundMean - foregroundMean) * (backgroundMean - foregroundMean);
+            if (variance > maxVariance) {
+                maxVariance = variance;
+                threshold = level;
+            }
+        }
+        return Math.min(210, Math.max(40, threshold + 15));
+    }
+
+    private static int luminance(int rgb) {
+        int red = (rgb >> 16) & 0xff;
+        int green = (rgb >> 8) & 0xff;
+        int blue = rgb & 0xff;
+        return (red * 299 + green * 587 + blue * 114) / 1000;
+    }
+
+    private static int[] smooth(int[] values, int radius) {
+        int[] result = new int[values.length];
+        for (int index = 0; index < values.length; index++) {
+            int start = Math.max(0, index - radius);
+            int end = Math.min(values.length - 1, index + radius);
+            int sum = 0;
+            for (int cursor = start; cursor <= end; cursor++) {
+                sum += values[cursor];
+            }
+            result[index] = sum / (end - start + 1);
+        }
+        return result;
+    }
+
+    private static List<int[]> columnRanges(boolean[] activeColumns, int gapTolerance, int minimumWidth) {
+        java.util.ArrayList<int[]> ranges = new java.util.ArrayList<>();
+        int start = -1;
+        int lastActive = -1;
+        for (int index = 0; index < activeColumns.length; index++) {
+            if (activeColumns[index]) {
+                if (start < 0) {
+                    start = index;
+                }
+                lastActive = index;
+            } else if (start >= 0 && index - lastActive > gapTolerance) {
+                if (lastActive - start + 1 >= minimumWidth) {
+                    ranges.add(new int[]{start, lastActive});
+                }
+                start = -1;
+                lastActive = -1;
+            }
+        }
+
+        if (start >= 0 && lastActive - start + 1 >= minimumWidth) {
+            ranges.add(new int[]{start, lastActive});
+        }
+        return ranges;
+    }
+
+    private static FingerSegment boundsForRange(int index, boolean[][] darkPixels, int startX, int endX, int width, int height) {
+        int minX = width;
+        int minY = height;
+        int maxX = -1;
+        int maxY = -1;
+        for (int x = Math.max(0, startX); x <= Math.min(width - 1, endX); x++) {
+            for (int y = 0; y < height; y++) {
+                if (darkPixels[x][y]) {
+                    minX = Math.min(minX, x);
+                    minY = Math.min(minY, y);
+                    maxX = Math.max(maxX, x);
+                    maxY = Math.max(maxY, y);
+                }
+            }
+        }
+
+        if (maxX < minX || maxY < minY) {
+            return new FingerSegment(index, 0, 0, 0, 0);
+        }
+
+        return new FingerSegment(index, minX, minY, maxX - minX + 1, maxY - minY + 1);
+    }
+
+    private static int area(FingerSegment segment) {
+        return segment.width() * segment.height();
     }
 
     private void unregisterCallbacks(String deviceId) {

@@ -15,9 +15,9 @@ public class FingerprintProperties {
     private String imageResolution = "500";
     private String activeArea = "0 0 0 0";
     private boolean spoofDetectionEnabled = false;
-    private boolean autoCaptureOverrideEnabled = false;
+    private boolean autoCaptureOverrideEnabled = true;
     private String autoCaptureOverrideTime = "4000";
-    private String autoCaptureOverrideMode = "OnInsufficientQuality";
+    private String autoCaptureOverrideMode = "OnInsufficientCount";
     private String previewImageFormat = "";
     private String previewLevel = "Medium";
     private long previewTimeoutSeconds = 5;

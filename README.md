@@ -90,14 +90,14 @@ set edilir. `application.properties` uzerinden degistirebilirsin:
 
 ```properties
 fingerprint.auto-capture-enabled=true
-fingerprint.auto-capture-required-objects=1
+fingerprint.auto-capture-required-objects=4
 fingerprint.auto-contrast-enabled=true
 fingerprint.image-resolution=500
 fingerprint.active-area=0 0 0 0
 fingerprint.spoof-detection-enabled=false
-fingerprint.auto-capture-override-enabled=false
+fingerprint.auto-capture-override-enabled=true
 fingerprint.auto-capture-override-time=4000
-fingerprint.auto-capture-override-mode=OnInsufficientQuality
+fingerprint.auto-capture-override-mode=OnInsufficientCount
 fingerprint.capture-timeout-seconds=0
 fingerprint.preview-image-format=
 fingerprint.preview-level=Medium
@@ -110,6 +110,17 @@ fingerprint.console-close-when-done=false
 ```
 
 `ACTIVE_AREA`, `IMAGE_RESOLUTION`, `AUTOCONTRAST_ON`, preview format/level, spoof detection ve auto-capture override ayarlari capture oncesi uygulanir. Opsiyonel property'ler cihazda desteklenmiyorsa uygulama uyarı loglayip capture'a devam eder.
+
+Sag dort parmak/slap capture icin tipik ayar:
+
+```properties
+fingerprint.default-position=RightFour
+fingerprint.default-impression=FingerprintFlat
+fingerprint.auto-capture-required-objects=4
+fingerprint.auto-capture-override-enabled=true
+fingerprint.auto-capture-override-mode=OnInsufficientCount
+fingerprint.auto-capture-override-time=4000
+```
 
 Live preview dosyasi callback thread'i icinde yazilmaz. Callback yalnizca native preview buffer'ini Java byte dizisine kopyalar; dosya yazma islemi ayri bir worker thread tarafindan yapilir. Bu, BioBase dokumanindaki callback thread'i icinden LSE/BioBase API cagrisi yapmama uyarisina uygun kalmak icindir.
 

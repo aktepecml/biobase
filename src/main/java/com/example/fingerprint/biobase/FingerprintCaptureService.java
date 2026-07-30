@@ -8,8 +8,10 @@ import com.example.fingerprint.config.FingerprintProperties;
 import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Graphics2D;
+import java.awt.Rectangle;
 import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -211,6 +213,9 @@ public class FingerprintCaptureService {
             FingerSegmentation segmentation = lastPreviewSegmentation.get();
             CapturedData saved = saveAsImage(captured, "capture");
             if (segmentation.segments().isEmpty()) {
+                segmentation = detectSegmentsFromFirViews(captured, saved);
+            }
+            if (segmentation.segments().isEmpty()) {
                 segmentation = detectSegmentsFromCaptureImage(saved, captured.detectedObjects());
             }
             Path annotatedPath = saveAnnotatedCapture(saved, segmentation);
@@ -305,11 +310,50 @@ public class FingerprintCaptureService {
                 throw new RuntimeException("FIR decode hatası: " + result);
             }
             // BMP encode
-            List<Cmt_finger_viewspec> views = queryViews(cfir);
-            return encodeViewToBmp(cfir, views.get(0));
+            List<FirViewImage> views = decodeFirViewImages(cfir);
+            return views.stream()
+                    .max((left, right) -> Integer.compare(imageArea(left.image()), imageArea(right.image())))
+                    .orElseThrow(() -> new RuntimeException("FIR içinde görüntü bulunamadı"))
+                    .bmpBytes();
         } finally {
             CmtFingerNative.INSTANCE.cmtfinger_free(cfir);
         }
+    }
+
+    private List<FirViewImage> decodeFirViewImages(byte[] firData) {
+        PointerByReference rcfir = new PointerByReference();
+        int result = CmtFingerNative.INSTANCE.cmtfinger_create(rcfir);
+        if (result != 0) {
+            throw new RuntimeException("Record oluşturulamadı, hata: " + result);
+        }
+        Pointer cfir = rcfir.getValue();
+        try {
+            result = CmtFingerNative.INSTANCE.cmtfinger_decode(cfir, firData, firData.length);
+            if (result != 0) {
+                throw new RuntimeException("FIR decode hatası: " + result);
+            }
+            return decodeFirViewImages(cfir);
+        } finally {
+            CmtFingerNative.INSTANCE.cmtfinger_free(cfir);
+        }
+    }
+
+    private List<FirViewImage> decodeFirViewImages(Pointer cfir) {
+        List<Cmt_finger_viewspec> views = queryViews(cfir);
+        ArrayList<FirViewImage> images = new ArrayList<>(views.size());
+        for (int index = 0; index < views.size(); index++) {
+            Cmt_finger_viewspec view = views.get(index);
+            byte[] bmpBytes = encodeViewToBmp(cfir, view);
+            try {
+                BufferedImage image = ImageIO.read(new ByteArrayInputStream(bmpBytes));
+                if (image != null) {
+                    images.add(new FirViewImage(index, view.position, view.impression, view.quality, bmpBytes, image));
+                }
+            } catch (IOException e) {
+                log.warn("Could not read FIR view {} as BMP: {}", index, e.getMessage());
+            }
+        }
+        return List.copyOf(images);
     }
 
     private List<Cmt_finger_viewspec> queryViews(Pointer cfir) {
@@ -405,6 +449,185 @@ public class FingerprintCaptureService {
             log.warn("Could not read preview segmentation coordinates: {}", e.getMessage());
             return FingerSegmentation.empty();
         }
+    }
+
+    private FingerSegmentation detectSegmentsFromFirViews(CapturedData originalData, CapturedData savedMainImage) {
+        if (originalData.format() != BIOB_FIR || savedMainImage.savedPath() == null) {
+            return FingerSegmentation.empty();
+        }
+
+        try {
+            BufferedImage mainImage = ImageIO.read(savedMainImage.savedPath().toFile());
+            if (mainImage == null) {
+                return FingerSegmentation.empty();
+            }
+
+            List<FirViewImage> views = decodeFirViewImages(originalData.bytes());
+            if (views.size() <= 1) {
+                log.debug("FIR view matching skipped: only {} view(s) available", views.size());
+                return FingerSegmentation.empty();
+            }
+
+            FirViewImage mainView = views.stream()
+                    .max((left, right) -> Integer.compare(imageArea(left.image()), imageArea(right.image())))
+                    .orElse(null);
+            if (mainView == null) {
+                return FingerSegmentation.empty();
+            }
+
+            ArrayList<FingerSegment> segments = new ArrayList<>();
+            int segmentIndex = 1;
+            for (FirViewImage view : views) {
+                if (view.index() == mainView.index()) {
+                    continue;
+                }
+                if (imageArea(view.image()) >= imageArea(mainImage) * 0.90) {
+                    continue;
+                }
+
+                Optional<FingerSegment> matched = matchSegmentImage(mainImage, view.image(), segmentIndex);
+                if (matched.isPresent()) {
+                    segments.add(matched.get());
+                    segmentIndex++;
+                } else {
+                    log.warn("Could not locate FIR segment view {} on main capture image", view.index());
+                }
+            }
+
+            if (segments.isEmpty()) {
+                return FingerSegmentation.empty();
+            }
+
+            segments.sort((left, right) -> Integer.compare(left.x(), right.x()));
+            ArrayList<FingerSegment> indexed = new ArrayList<>(segments.size());
+            for (int index = 0; index < segments.size(); index++) {
+                FingerSegment segment = segments.get(index);
+                indexed.add(new FingerSegment(index + 1, segment.x(), segment.y(), segment.width(), segment.height()));
+            }
+            log.info("FIR view matching detected {} segment(s) on capture image {}x{}",
+                    indexed.size(), mainImage.getWidth(), mainImage.getHeight());
+            return new FingerSegmentation(mainImage.getWidth(), mainImage.getHeight(), List.copyOf(indexed));
+        } catch (Exception e) {
+            log.warn("FIR view matching skipped: {}", e.getMessage());
+            return FingerSegmentation.empty();
+        }
+    }
+
+    private Optional<FingerSegment> matchSegmentImage(BufferedImage mainImage, BufferedImage segmentImage, int index) {
+        Rectangle contentBounds = darkContentBounds(segmentImage);
+        if (contentBounds == null || contentBounds.width <= 0 || contentBounds.height <= 0) {
+            return Optional.empty();
+        }
+        if (contentBounds.width > mainImage.getWidth() || contentBounds.height > mainImage.getHeight()) {
+            return Optional.empty();
+        }
+
+        int templateWidth = contentBounds.width;
+        int templateHeight = contentBounds.height;
+        List<int[]> samplePoints = templateSamplePoints(templateWidth, templateHeight);
+        int step = Math.max(1, Math.min(templateWidth, templateHeight) / 30);
+
+        MatchScore best = findBestTemplateMatch(mainImage, segmentImage, contentBounds, samplePoints, step, 0, 0,
+                mainImage.getWidth() - templateWidth, mainImage.getHeight() - templateHeight);
+        int refineRadius = Math.max(2, step + 1);
+        best = findBestTemplateMatch(mainImage, segmentImage, contentBounds, samplePoints, 1,
+                Math.max(0, best.x() - refineRadius),
+                Math.max(0, best.y() - refineRadius),
+                Math.min(mainImage.getWidth() - templateWidth, best.x() + refineRadius),
+                Math.min(mainImage.getHeight() - templateHeight, best.y() + refineRadius));
+
+        if (best.averageDifference() > 75) {
+            log.warn("FIR segment match rejected: average luminance difference {}", best.averageDifference());
+            return Optional.empty();
+        }
+
+        return Optional.of(new FingerSegment(index, best.x(), best.y(), templateWidth, templateHeight));
+    }
+
+    private MatchScore findBestTemplateMatch(
+            BufferedImage mainImage,
+            BufferedImage segmentImage,
+            Rectangle contentBounds,
+            List<int[]> samplePoints,
+            int step,
+            int startX,
+            int startY,
+            int endX,
+            int endY
+    ) {
+        MatchScore best = new MatchScore(startX, startY, Integer.MAX_VALUE);
+        for (int y = startY; y <= endY; y += step) {
+            for (int x = startX; x <= endX; x += step) {
+                int score = templateDifference(mainImage, segmentImage, contentBounds, samplePoints, x, y);
+                if (score < best.totalDifference()) {
+                    best = new MatchScore(x, y, score);
+                }
+            }
+        }
+        return best;
+    }
+
+    private int templateDifference(
+            BufferedImage mainImage,
+            BufferedImage segmentImage,
+            Rectangle contentBounds,
+            List<int[]> samplePoints,
+            int mainX,
+            int mainY
+    ) {
+        int total = 0;
+        for (int[] point : samplePoints) {
+            int x = point[0];
+            int y = point[1];
+            int templateLuminance = luminance(segmentImage.getRGB(contentBounds.x + x, contentBounds.y + y));
+            int mainLuminance = luminance(mainImage.getRGB(mainX + x, mainY + y));
+            total += Math.abs(templateLuminance - mainLuminance);
+        }
+        return total / Math.max(1, samplePoints.size());
+    }
+
+    private static List<int[]> templateSamplePoints(int width, int height) {
+        int gridX = Math.min(32, Math.max(8, width / 8));
+        int gridY = Math.min(32, Math.max(8, height / 8));
+        ArrayList<int[]> points = new ArrayList<>(gridX * gridY);
+        for (int gy = 0; gy < gridY; gy++) {
+            int y = gridY == 1 ? 0 : gy * (height - 1) / (gridY - 1);
+            for (int gx = 0; gx < gridX; gx++) {
+                int x = gridX == 1 ? 0 : gx * (width - 1) / (gridX - 1);
+                points.add(new int[]{x, y});
+            }
+        }
+        return List.copyOf(points);
+    }
+
+    private Rectangle darkContentBounds(BufferedImage image) {
+        int threshold = otsuThreshold(image);
+        int minX = image.getWidth();
+        int minY = image.getHeight();
+        int maxX = -1;
+        int maxY = -1;
+
+        for (int y = 0; y < image.getHeight(); y++) {
+            for (int x = 0; x < image.getWidth(); x++) {
+                if (luminance(image.getRGB(x, y)) <= threshold) {
+                    minX = Math.min(minX, x);
+                    minY = Math.min(minY, y);
+                    maxX = Math.max(maxX, x);
+                    maxY = Math.max(maxY, y);
+                }
+            }
+        }
+
+        if (maxX < minX || maxY < minY) {
+            return null;
+        }
+
+        int padding = Math.max(2, Math.min(image.getWidth(), image.getHeight()) / 100);
+        minX = Math.max(0, minX - padding);
+        minY = Math.max(0, minY - padding);
+        maxX = Math.min(image.getWidth() - 1, maxX + padding);
+        maxY = Math.min(image.getHeight() - 1, maxY + padding);
+        return new Rectangle(minX, minY, maxX - minX + 1, maxY - minY + 1);
     }
 
     private FingerSegmentation detectSegmentsFromCaptureImage(CapturedData data, int expectedCount) {
@@ -605,6 +828,10 @@ public class FingerprintCaptureService {
 
     private static int area(FingerSegment segment) {
         return segment.width() * segment.height();
+    }
+
+    private static int imageArea(BufferedImage image) {
+        return image.getWidth() * image.getHeight();
     }
 
     private void unregisterCallbacks(String deviceId) {
@@ -956,6 +1183,26 @@ public class FingerprintCaptureService {
 
     private static String timestamp() {
         return DateTimeFormatter.ISO_INSTANT.format(Instant.now()).replace(':', '-');
+    }
+
+    private record FirViewImage(
+            int index,
+            int position,
+            int impression,
+            int quality,
+            byte[] bmpBytes,
+            BufferedImage image
+    ) {
+    }
+
+    private record MatchScore(
+            int x,
+            int y,
+            int totalDifference
+    ) {
+        int averageDifference() {
+            return totalDifference;
+        }
     }
 
     @PreDestroy

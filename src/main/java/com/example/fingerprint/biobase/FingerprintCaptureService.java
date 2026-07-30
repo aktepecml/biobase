@@ -15,6 +15,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -42,6 +43,8 @@ import static com.example.fingerprint.biobase.BioBaseDataFormat.BIOB_FIR;
 @Service
 public class FingerprintCaptureService {
     private static final Logger log = LoggerFactory.getLogger(FingerprintCaptureService.class);
+    private static final long ACQUISITION_STOP_TIMEOUT_MILLIS = 5_000;
+    private static final long ACQUISITION_STOP_POLL_MILLIS = 100;
     private static final String PROP_TRUE = "TRUE";
     private static final String PROP_FALSE = "FALSE";
     private static final String PROP_AUTOCAPTURE_SUPPORTED = "DEVICE_AUTOCAPTURE_SUPPORTED";
@@ -63,6 +66,8 @@ public class FingerprintCaptureService {
     private final AtomicReference<CapturedData> lastPreview = new AtomicReference<>();
     private final AtomicReference<FingerSegmentation> lastPreviewSegmentation = new AtomicReference<>(FingerSegmentation.empty());
     private final AtomicReference<CapturedData> lastCapture = new AtomicReference<>();
+    private final AtomicReference<Integer> lastObjectCountState = new AtomicReference<>();
+    private final AtomicReference<List<Integer>> lastObjectQualityStates = new AtomicReference<>(List.of());
     private final AtomicReference<CompletableFuture<CapturedData>> pendingCapture = new AtomicReference<>();
     private final AtomicReference<CapturedData> livePreviewToWrite = new AtomicReference<>();
     private final AtomicBoolean livePreviewWriterRunning = new AtomicBoolean(false);
@@ -80,6 +85,8 @@ public class FingerprintCaptureService {
     private final BioBaseNative.AcquisitionStartedCallback startedCallback;
     private final BioBaseNative.AcquisitionCompletedCallback completedCallback;
     private final BioBaseNative.DataAvailableCallback dataAvailableCallback;
+    private final BioBaseNative.ObjectQualityCallback objectQualityCallback;
+    private final BioBaseNative.ObjectCountCallback objectCountCallback;
 
     public FingerprintCaptureService(BioBaseClient client, FingerprintProperties properties) {
         this.client = client;
@@ -117,6 +124,27 @@ public class FingerprintCaptureService {
                 }
             }
         };
+        this.objectQualityCallback = (deviceId, context, qualityStates, qualityStateCount) -> {
+            if (qualityStates == null || qualityStateCount <= 0) {
+                lastObjectQualityStates.set(List.of());
+                return;
+            }
+
+            ArrayList<Integer> states = new ArrayList<>(qualityStateCount);
+            for (int index = 0; index < qualityStateCount; index++) {
+                states.add(qualityStates.getInt((long) index * Integer.BYTES));
+            }
+            List<Integer> previous = lastObjectQualityStates.getAndSet(List.copyOf(states));
+            if (!previous.equals(states)) {
+                log.debug("Object quality changed: {}", toQualityLog(states));
+            }
+        };
+        this.objectCountCallback = (deviceId, context, objectCountState) -> {
+            Integer previous = lastObjectCountState.getAndSet(objectCountState);
+            if (!Objects.equals(previous, objectCountState)) {
+                log.debug("Object count changed: {}", toCountLog(objectCountState));
+            }
+        };
     }
 
     public void openSystem() {
@@ -140,6 +168,8 @@ public class FingerprintCaptureService {
 
     public void openDevice(String deviceId, boolean reset) {
         client.registerCallback(deviceId, BioBaseEvent.BIOB_PREVIEW, previewCallback);
+        client.registerCallback(deviceId, BioBaseEvent.BIOB_OBJECT_QUALITY, objectQualityCallback);
+        client.registerCallback(deviceId, BioBaseEvent.BIOB_OBJECT_COUNT, objectCountCallback);
         client.registerCallback(deviceId, BioBaseEvent.BIOB_ACQUISITION_STARTED, startedCallback);
         client.registerCallback(deviceId, BioBaseEvent.BIOB_ACQUISITION_COMPLETED, completedCallback);
         client.registerCallback(deviceId, BioBaseEvent.BIOB_DATA_AVAILABLE, dataAvailableCallback);
@@ -155,7 +185,7 @@ public class FingerprintCaptureService {
         }
     }
 
-    public CaptureResponse capture(String requestedDeviceId, String position, String impression, Long timeoutSeconds) {
+    public synchronized CaptureResponse capture(String requestedDeviceId, String position, String impression, Long timeoutSeconds) {
         String deviceId = resolveDeviceId(requestedDeviceId);
         if (!client.isDeviceReady(deviceId)) {
             throw new BioBaseException("Device is not ready. Open the device first.");
@@ -167,6 +197,7 @@ public class FingerprintCaptureService {
         }
 
         try {
+            clearLiveObjectState();
             configureCaptureProperties(deviceId, blankToDefault(impression, properties.getDefaultImpression()));
             startLivePreviewWriter();
             client.beginAcquisition(
@@ -176,6 +207,7 @@ public class FingerprintCaptureService {
             );
             long timeout = timeoutSeconds == null ? properties.getCaptureTimeoutSeconds() : timeoutSeconds;
             CapturedData captured = waitForCapture(future, timeout);
+            waitUntilAcquisitionStopped(deviceId);
             FingerSegmentation segmentation = lastPreviewSegmentation.get();
             CapturedData saved = saveAsImage(captured, "capture");
             if (segmentation.segments().isEmpty()) {
@@ -204,6 +236,17 @@ public class FingerprintCaptureService {
         return future.get(timeoutSeconds, TimeUnit.SECONDS);
     }
 
+    private void waitUntilAcquisitionStopped(String deviceId) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + ACQUISITION_STOP_TIMEOUT_MILLIS;
+        while (System.currentTimeMillis() < deadline) {
+            if (!client.isDeviceAcquiring(deviceId)) {
+                return;
+            }
+            Thread.sleep(ACQUISITION_STOP_POLL_MILLIS);
+        }
+        log.warn("Device is still acquiring after {} ms; continuing cleanup.", ACQUISITION_STOP_TIMEOUT_MILLIS);
+    }
+
     public void cancel(String requestedDeviceId) {
         client.cancelAcquisition(resolveDeviceId(requestedDeviceId));
     }
@@ -223,7 +266,9 @@ public class FingerprintCaptureService {
                 ready,
                 acquiring,
                 lastPreview.get() != null,
-                lastCapture.get() != null
+                lastCapture.get() != null,
+                objectCountResponse(lastObjectCountState.get()),
+                objectQualityResponses(lastObjectQualityStates.get())
         );
     }
 
@@ -564,6 +609,8 @@ public class FingerprintCaptureService {
 
     private void unregisterCallbacks(String deviceId) {
         client.registerCallback(deviceId, BioBaseEvent.BIOB_PREVIEW, null);
+        client.registerCallback(deviceId, BioBaseEvent.BIOB_OBJECT_QUALITY, null);
+        client.registerCallback(deviceId, BioBaseEvent.BIOB_OBJECT_COUNT, null);
         client.registerCallback(deviceId, BioBaseEvent.BIOB_ACQUISITION_STARTED, null);
         client.registerCallback(deviceId, BioBaseEvent.BIOB_ACQUISITION_COMPLETED, null);
         client.registerCallback(deviceId, BioBaseEvent.BIOB_DATA_AVAILABLE, null);
@@ -818,10 +865,20 @@ public class FingerprintCaptureService {
     }
 
     private static CaptureResponse toResponse(CapturedData data) {
-        return toResponse(data, FingerSegmentation.empty(), null);
+        return toResponse(data, FingerSegmentation.empty(), null, null, List.of());
     }
 
-    private static CaptureResponse toResponse(CapturedData data, FingerSegmentation segmentation, Path annotatedPath) {
+    private CaptureResponse toResponse(CapturedData data, FingerSegmentation segmentation, Path annotatedPath) {
+        return toResponse(data, segmentation, annotatedPath, lastObjectCountState.get(), lastObjectQualityStates.get());
+    }
+
+    private static CaptureResponse toResponse(
+            CapturedData data,
+            FingerSegmentation segmentation,
+            Path annotatedPath,
+            Integer objectCountState,
+            List<Integer> objectQualityStates
+    ) {
         return new CaptureResponse(
                 data.deviceId(),
                 data.format().name(),
@@ -841,9 +898,49 @@ public class FingerprintCaptureService {
                                 segment.height()
                         ))
                         .toList(),
+                objectCountResponse(objectCountState),
+                objectQualityResponses(objectQualityStates),
                 data.bytes().length,
                 data.capturedAt()
         );
+    }
+
+    private void clearLiveObjectState() {
+        lastObjectCountState.set(null);
+        lastObjectQualityStates.set(List.of());
+    }
+
+    private static CaptureResponse.ObjectCountResponse objectCountResponse(Integer value) {
+        if (value == null) {
+            return null;
+        }
+        return new CaptureResponse.ObjectCountResponse(value, BioBaseObjectCountState.fromValue(value).name());
+    }
+
+    private static List<CaptureResponse.ObjectQualityResponse> objectQualityResponses(List<Integer> values) {
+        if (values == null || values.isEmpty()) {
+            return List.of();
+        }
+        ArrayList<CaptureResponse.ObjectQualityResponse> responses = new ArrayList<>(values.size());
+        for (int index = 0; index < values.size(); index++) {
+            int value = values.get(index);
+            responses.add(new CaptureResponse.ObjectQualityResponse(
+                    index,
+                    value,
+                    BioBaseObjectQualityState.fromValue(value).name()
+            ));
+        }
+        return responses;
+    }
+
+    private static String toCountLog(int value) {
+        return BioBaseObjectCountState.fromValue(value).name() + "(" + value + ")";
+    }
+
+    private static List<String> toQualityLog(List<Integer> values) {
+        return values.stream()
+                .map(value -> BioBaseObjectQualityState.fromValue(value).name() + "(" + value + ")")
+                .toList();
     }
 
     private static Path annotatedPath(Path capturePath) {

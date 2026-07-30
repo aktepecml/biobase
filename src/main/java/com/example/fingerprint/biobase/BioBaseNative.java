@@ -66,6 +66,14 @@ public interface BioBaseNative extends StdCallLibrary {
         void invoke(String deviceId, Pointer context, int dataStatus, Pointer data, int detectedObjects);
     }
 
+    interface ObjectQualityCallback extends StdCallCallback {
+        void invoke(String deviceId, Pointer context, Pointer qualityStates, int qualityStateCount);
+    }
+
+    interface ObjectCountCallback extends StdCallCallback {
+        void invoke(String deviceId, Pointer context, int objectCountState);
+    }
+
     class BioBData extends Structure {
         public Pointer buffer;
         public int bufferSize;

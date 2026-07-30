@@ -14,6 +14,8 @@ public record CaptureResponse(
         int segmentImageWidth,
         int segmentImageHeight,
         List<SegmentResponse> segments,
+        ObjectCountResponse objectCount,
+        List<ObjectQualityResponse> objectQualities,
         int byteCount,
         Instant capturedAt
 ) {
@@ -23,6 +25,19 @@ public record CaptureResponse(
             int y,
             int width,
             int height
+    ) {
+    }
+
+    public record ObjectCountResponse(
+            int value,
+            String name
+    ) {
+    }
+
+    public record ObjectQualityResponse(
+            int index,
+            int value,
+            String name
     ) {
     }
 }

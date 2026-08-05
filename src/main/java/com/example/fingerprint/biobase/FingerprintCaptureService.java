@@ -220,6 +220,7 @@ public class FingerprintCaptureService {
             }
             Path annotatedPath = saveAnnotatedCapture(saved, segmentation);
             lastCapture.set(saved);
+            beepCaptureSuccess(deviceId);
             return toResponse(saved, segmentation, annotatedPath);
         } catch (TimeoutException e) {
             client.cancelAcquisition(deviceId);
@@ -1077,6 +1078,29 @@ public class FingerprintCaptureService {
         }
     }
 
+    private void beepCaptureSuccess(String deviceId) {
+        if (!properties.isCaptureSuccessBeepEnabled()) {
+            return;
+        }
+
+        String pattern = blankToDefault(properties.getCaptureSuccessBeepPattern(), "3");
+        String volume = blankToDefault(properties.getCaptureSuccessBeepVolume(), "50");
+        String xml = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"true\"?>"
+                + "<BioBase xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" "
+                + "xsi:noNamespaceSchemaLocation=\"BioBase.xsd\" Version=\"4.0\">"
+                + "<OutputData>"
+                + "<Beeper Pattern=\"" + escapeXmlAttribute(pattern) + "\" Volume=\"" + escapeXmlAttribute(volume) + "\"/>"
+                + "</OutputData>"
+                + "</BioBase>";
+
+        try {
+            client.setOutputXml(deviceId, xml);
+            log.info("Capture success beep sent: pattern={}, volume={}", pattern, volume);
+        } catch (BioBaseException e) {
+            log.warn("Could not send capture success beep: {}", e.getMessage());
+        }
+    }
+
     private String resolveDeviceId(String requestedDeviceId) {
         if (requestedDeviceId != null && !requestedDeviceId.isBlank()) {
             return requestedDeviceId;
@@ -1089,6 +1113,14 @@ public class FingerprintCaptureService {
 
     private static String blankToDefault(String value, String defaultValue) {
         return value == null || value.isBlank() ? defaultValue : value;
+    }
+
+    private static String escapeXmlAttribute(String value) {
+        return value
+                .replace("&", "&amp;")
+                .replace("\"", "&quot;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;");
     }
 
     private static CaptureResponse toResponse(CapturedData data) {

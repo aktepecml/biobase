@@ -1,8 +1,10 @@
 package com.example.fingerprint.biobase;
 
 import com.sun.jna.Pointer;
+import com.sun.jna.Memory;
 import com.sun.jna.win32.StdCallLibrary;
 import com.sun.jna.ptr.IntByReference;
+import java.nio.charset.StandardCharsets;
 import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -108,6 +110,25 @@ public class BioBaseClient {
         IntByReference ret = new IntByReference();
         nativeApi.BioB_SetProperty(deviceId, propertyName, value, ret);
         requireSuccess("BioB_SetProperty", ret.getValue());
+    }
+
+    public synchronized void setOutputXml(String deviceId, String xml) {
+        byte[] bytes = xml.getBytes(StandardCharsets.UTF_8);
+        Memory buffer = new Memory(bytes.length);
+        buffer.write(0, bytes, 0, bytes.length);
+
+        BioBaseNative.BioBSetOutputData data = new BioBaseNative.BioBSetOutputData();
+        data.buffer = buffer;
+        data.bufferSize = bytes.length;
+        data.formatType = 7; // BIOB_OUT_XML
+        data.extStruct = Pointer.NULL;
+        data.structName = Pointer.NULL;
+        data.transactionId = 0;
+        data.write();
+
+        IntByReference ret = new IntByReference();
+        nativeApi.BioB_SetOutputData(deviceId, data, ret);
+        requireSuccess("BioB_SetOutputData", ret.getValue());
     }
 
     public synchronized int beginAcquisition(String deviceId, String position, String impression) {

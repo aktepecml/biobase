@@ -36,6 +36,8 @@ public interface BioBaseNative extends StdCallLibrary {
 
     void BioB_SetProperty(String deviceId, String propertyName, String value, IntByReference retCode);
 
+    void BioB_SetOutputData(String deviceId, BioBSetOutputData data, IntByReference retCode);
+
     void BioB_CancelAcquisition(String deviceId, IntByReference retCode);
 
     void BioB_BeginAcquisitionProcess(String deviceId, String positionType, String impressionType, IntByReference retCode);
@@ -90,6 +92,20 @@ public interface BioBaseNative extends StdCallLibrary {
         @Override
         protected List<String> getFieldOrder() {
             return List.of("buffer", "bufferSize", "formatType", "finalImage", "extStruct", "structName");
+        }
+    }
+
+    class BioBSetOutputData extends Structure {
+        public Pointer buffer;
+        public int bufferSize;
+        public int formatType;
+        public Pointer extStruct;
+        public Pointer structName;
+        public int transactionId;
+
+        @Override
+        protected List<String> getFieldOrder() {
+            return List.of("buffer", "bufferSize", "formatType", "extStruct", "structName", "transactionId");
         }
     }
 

@@ -26,6 +26,9 @@ public class FingerprintProperties {
     private long livePreviewWriteIntervalMillis = 250;
     private boolean consoleRunnerEnabled = true;
     private boolean consoleCloseWhenDone = false;
+    private boolean captureSuccessBeepEnabled = true;
+    private String captureSuccessBeepPattern = "3";
+    private String captureSuccessBeepVolume = "50";
 
     public Path getOutputDir() {
         return outputDir;
@@ -193,5 +196,29 @@ public class FingerprintProperties {
 
     public void setConsoleCloseWhenDone(boolean consoleCloseWhenDone) {
         this.consoleCloseWhenDone = consoleCloseWhenDone;
+    }
+
+    public boolean isCaptureSuccessBeepEnabled() {
+        return captureSuccessBeepEnabled;
+    }
+
+    public void setCaptureSuccessBeepEnabled(boolean captureSuccessBeepEnabled) {
+        this.captureSuccessBeepEnabled = captureSuccessBeepEnabled;
+    }
+
+    public String getCaptureSuccessBeepPattern() {
+        return captureSuccessBeepPattern;
+    }
+
+    public void setCaptureSuccessBeepPattern(String captureSuccessBeepPattern) {
+        this.captureSuccessBeepPattern = captureSuccessBeepPattern;
+    }
+
+    public String getCaptureSuccessBeepVolume() {
+        return captureSuccessBeepVolume;
+    }
+
+    public void setCaptureSuccessBeepVolume(String captureSuccessBeepVolume) {
+        this.captureSuccessBeepVolume = captureSuccessBeepVolume;
     }
 }

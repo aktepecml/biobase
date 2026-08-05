@@ -114,8 +114,9 @@ public class BioBaseClient {
 
     public synchronized void setOutputXml(String deviceId, String xml) {
         byte[] bytes = xml.getBytes(StandardCharsets.UTF_8);
-        Memory buffer = new Memory(bytes.length);
+        Memory buffer = new Memory(bytes.length + 1L);
         buffer.write(0, bytes, 0, bytes.length);
+        buffer.setByte(bytes.length, (byte) 0);
 
         BioBaseNative.BioBSetOutputData data = new BioBaseNative.BioBSetOutputData();
         data.buffer = buffer;

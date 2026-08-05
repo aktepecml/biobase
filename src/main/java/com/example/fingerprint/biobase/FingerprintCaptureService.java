@@ -1085,9 +1085,8 @@ public class FingerprintCaptureService {
 
         String pattern = blankToDefault(properties.getCaptureSuccessBeepPattern(), "3");
         String volume = blankToDefault(properties.getCaptureSuccessBeepVolume(), "50");
-        String xml = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"true\"?>"
-                + "<BioBase xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" "
-                + "xsi:noNamespaceSchemaLocation=\"BioBase.xsd\" Version=\"4.0\">"
+        String xml = "<?xml version=\"1.0\"?>"
+                + "<BioBase Version=\"3.2\">"
                 + "<OutputData>"
                 + "<Beeper Pattern=\"" + escapeXmlAttribute(pattern) + "\" Volume=\"" + escapeXmlAttribute(volume) + "\"/>"
                 + "</OutputData>"

@@ -15,6 +15,7 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -298,6 +299,10 @@ public class FingerprintCaptureService {
     }
 
     private byte[] firToBmp(byte[] firData) {
+        return firToBmp(firData, true);
+    }
+
+    private byte[] firToBmp(byte[] firData, boolean preferLargestView) {
         PointerByReference rcfir = new PointerByReference();
         int result = CmtFingerNative.INSTANCE.cmtfinger_create(rcfir);
         if (result != 0) {
@@ -311,8 +316,12 @@ public class FingerprintCaptureService {
                 throw new RuntimeException("FIR decode hatası: " + result);
             }
             // BMP encode
-            List<FirViewImage> views = decodeFirViewImages(cfir);
-            return views.stream()
+            List<Cmt_finger_viewspec> views = queryViews(cfir);
+            if (!preferLargestView || views.size() == 1) {
+                return encodeViewToBmp(cfir, views.get(0));
+            }
+
+            return decodeFirViewImages(cfir).stream()
                     .max((left, right) -> Integer.compare(imageArea(left.image()), imageArea(right.image())))
                     .orElseThrow(() -> new RuntimeException("FIR içinde görüntü bulunamadı"))
                     .bmpBytes();
@@ -972,17 +981,50 @@ public class FingerprintCaptureService {
 
     private void saveLivePreview(CapturedData data) {
         try {
-            CapturedData image = toImageData(data);
+            CapturedData image = toLivePreviewImageData(data);
             Files.createDirectories(properties.getOutputDir());
             Path path = properties.getOutputDir()
                     .resolve(properties.getLivePreviewFileName() + "." + image.format().extension())
                     .toAbsolutePath();
-            Files.write(path, image.bytes());
+            writeAtomic(path, image.bytes());
             if (livePreviewSavedLogged.compareAndSet(false, true)) {
                 log.info("Live preview image is being updated at {}", path);
             }
         } catch (Exception e) {
             log.warn("Could not write live preview image: {}", e.getMessage());
+        }
+    }
+
+    private CapturedData toLivePreviewImageData(CapturedData data) {
+        if (data.format() != BIOB_FIR) {
+            return data;
+        }
+
+        try {
+            byte[] bmpBytes = firToBmp(data.bytes(), false);
+            return new CapturedData(
+                    data.deviceId(),
+                    BIOB_BMP,
+                    data.finalImage(),
+                    data.dataStatus(),
+                    data.detectedObjects(),
+                    bmpBytes,
+                    data.savedPath(),
+                    data.capturedAt()
+            );
+        } catch (Exception e) {
+            log.warn("Could not convert preview FIR to BMP, saving raw FIR data instead: {}", e.getMessage());
+            return data;
+        }
+    }
+
+    private void writeAtomic(Path path, byte[] bytes) throws IOException {
+        Path tempPath = path.resolveSibling(path.getFileName() + ".tmp");
+        Files.write(tempPath, bytes);
+        try {
+            Files.move(tempPath, path, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException e) {
+            Files.move(tempPath, path, StandardCopyOption.REPLACE_EXISTING);
         }
     }
 
@@ -1085,8 +1127,10 @@ public class FingerprintCaptureService {
 
         String pattern = blankToDefault(properties.getCaptureSuccessBeepPattern(), "3");
         String volume = blankToDefault(properties.getCaptureSuccessBeepVolume(), "50");
-        String xml = "<?xml version=\"1.0\"?>"
-                + "<BioBase Version=\"3.2\">"
+        String xml = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"true\"?>"
+                + "<BioBase Version=\"4.0\" "
+                + "xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" "
+                + "xsi:noNamespaceSchemaLocation=\"BioBase.xsd\">"
                 + "<OutputData>"
                 + "<Beeper Pattern=\"" + escapeXmlAttribute(pattern) + "\" Volume=\"" + escapeXmlAttribute(volume) + "\"/>"
                 + "</OutputData>"

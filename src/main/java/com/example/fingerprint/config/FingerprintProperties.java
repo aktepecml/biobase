@@ -23,7 +23,7 @@ public class FingerprintProperties {
     private long previewTimeoutSeconds = 5;
     private boolean livePreviewFileEnabled = true;
     private String livePreviewFileName = "preview-live";
-    private long livePreviewWriteIntervalMillis = 250;
+    private long livePreviewWriteIntervalMillis = 100;
     private boolean consoleRunnerEnabled = true;
     private boolean consoleCloseWhenDone = false;
     private boolean captureSuccessBeepEnabled = true;

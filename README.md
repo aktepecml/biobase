@@ -104,7 +104,7 @@ fingerprint.preview-level=Medium
 fingerprint.preview-timeout-seconds=5
 fingerprint.live-preview-file-enabled=true
 fingerprint.live-preview-file-name=preview-live
-fingerprint.live-preview-write-interval-millis=250
+fingerprint.live-preview-write-interval-millis=100
 fingerprint.console-runner-enabled=true
 fingerprint.console-close-when-done=false
 fingerprint.capture-success-beep-enabled=true
@@ -126,6 +126,8 @@ fingerprint.auto-capture-override-time=4000
 ```
 
 Live preview dosyasi callback thread'i icinde yazilmaz. Callback yalnizca native preview buffer'ini Java byte dizisine kopyalar; dosya yazma islemi ayri bir worker thread tarafindan yapilir. Bu, BioBase dokumanindaki callback thread'i icinden LSE/BioBase API cagrisi yapmama uyarisina uygun kalmak icindir.
+Live preview dosyasi once gecici dosyaya yazilir, sonra atomik olarak asil dosyanin yerine tasinir. Bu, resmi izleyen uygulamanin yarim yazilmis frame okumasini azaltir.
+FIR preview frame'leri hiz icin yalnizca ilk view uzerinden BMP'ye cevrilir; final capture kaydinda ise en buyuk FIR view ana image olarak secilmeye devam eder.
 
 Capture sirasinda SDK'nin `BIOB_OBJECT_COUNT` ve `BIOB_OBJECT_QUALITY` callbackleri de dinlenir. Callback thread'i icinde yalnizca native degerler Java listesine kopyalanir; SDK/BioBase API cagrisi yapilmaz. Son canli state `/api/fingerprint/devices/{deviceId}/status` ve capture response icindeki `objectCount` / `objectQualities` alanlarinda gorulebilir.
 

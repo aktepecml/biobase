@@ -100,7 +100,7 @@ fingerprint.auto-capture-override-time=4000
 fingerprint.auto-capture-override-mode=OnInsufficientCount
 fingerprint.capture-timeout-seconds=0
 fingerprint.preview-image-format=
-fingerprint.preview-level=Medium
+fingerprint.preview-level=Low
 fingerprint.preview-timeout-seconds=5
 fingerprint.live-preview-file-enabled=true
 fingerprint.live-preview-file-name=preview-live
@@ -135,4 +135,4 @@ Segment bbox akisi oncelik sirasiyla calisir: preview callback icindeki `BioBSce
 
 Capture basariyla kaydedildikten sonra `BioB_SetOutputData` ile cihaz beeper'i tetiklenir. Bunu kapatmak icin `fingerprint.capture-success-beep-enabled=false` verilebilir; pattern ve volume propertylerden degistirilebilir. Cihaz beeper desteklemiyorsa capture basarili kalir, yalnizca warn log basilir.
 
-`fingerprint.capture-timeout-seconds=0` final capture gelene kadar bekler. Pozitif bir deger verirsen sure dolunca acquisition iptal edilir. `fingerprint.preview-image-format` varsayilan olarak bostur; cihazin `PREVIEW_IMAGE_FORMAT` property set etmeyi desteklediginden eminsen `BMP` veya `JPG` olarak acabilirsin.
+`fingerprint.capture-timeout-seconds=0` final capture gelene kadar bekler. Pozitif bir deger verirsen sure dolunca acquisition iptal edilir. `fingerprint.preview-image-format` varsayilan olarak bostur; cihazin `PREVIEW_IMAGE_FORMAT` property set etmeyi desteklediginden eminsen `BMP` veya `JPG` olarak acabilirsin. `fingerprint.preview-level=Low` sadece live preview boyutu/akiciligi icindir, final capture kalitesini dusurmez.

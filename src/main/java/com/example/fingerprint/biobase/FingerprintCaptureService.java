@@ -96,9 +96,13 @@ public class FingerprintCaptureService {
         this.properties = properties;
         this.previewCallback = (deviceId, context, data) -> {
             if (data != null) {
-                lastPreviewSegmentation.set(readPreviewSegmentation(data));
                 CapturedData preview = client.readData(deviceId, 0, data, 0);
                 if (preview.bytes().length > 0) {
+                    if (preview.format() == BIOB_FIR) {
+                        lastPreviewSegmentation.set(FingerSegmentation.empty());
+                    } else {
+                        lastPreviewSegmentation.set(readPreviewSegmentation(data));
+                    }
                     if (previewSeenLogged.compareAndSet(false, true)) {
                         log.info("First preview received: format={}, bytes={}", preview.format(), preview.bytes().length);
                     }

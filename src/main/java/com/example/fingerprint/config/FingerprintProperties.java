@@ -19,7 +19,7 @@ public class FingerprintProperties {
     private String autoCaptureOverrideTime = "4000";
     private String autoCaptureOverrideMode = "OnInsufficientCount";
     private String previewImageFormat = "";
-    private String previewLevel = "Medium";
+    private String previewLevel = "Low";
     private long previewTimeoutSeconds = 5;
     private boolean livePreviewFileEnabled = true;
     private String livePreviewFileName = "preview-live";

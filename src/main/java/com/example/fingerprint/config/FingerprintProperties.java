@@ -19,11 +19,12 @@ public class FingerprintProperties {
     private String autoCaptureOverrideTime = "4000";
     private String autoCaptureOverrideMode = "OnInsufficientCount";
     private String previewImageFormat = "";
-    private String previewLevel = "Low";
+    private String previewLevel = "Medium";
     private long previewTimeoutSeconds = 5;
-    private boolean livePreviewFileEnabled = true;
-    private String livePreviewFileName = "preview-live";
-    private long livePreviewWriteIntervalMillis = 100;
+    private boolean previewPayloadCacheEnabled = true;
+    private long previewPayloadCacheIntervalMillis = 0;
+    private boolean previewDiagnosticsEnabled = true;
+    private long previewDiagnosticsIntervalMillis = 5000;
     private boolean consoleRunnerEnabled = true;
     private boolean consoleCloseWhenDone = false;
     private boolean captureSuccessBeepEnabled = true;
@@ -158,28 +159,36 @@ public class FingerprintProperties {
         this.previewTimeoutSeconds = previewTimeoutSeconds;
     }
 
-    public boolean isLivePreviewFileEnabled() {
-        return livePreviewFileEnabled;
+    public boolean isPreviewPayloadCacheEnabled() {
+        return previewPayloadCacheEnabled;
     }
 
-    public void setLivePreviewFileEnabled(boolean livePreviewFileEnabled) {
-        this.livePreviewFileEnabled = livePreviewFileEnabled;
+    public void setPreviewPayloadCacheEnabled(boolean previewPayloadCacheEnabled) {
+        this.previewPayloadCacheEnabled = previewPayloadCacheEnabled;
     }
 
-    public String getLivePreviewFileName() {
-        return livePreviewFileName;
+    public long getPreviewPayloadCacheIntervalMillis() {
+        return previewPayloadCacheIntervalMillis;
     }
 
-    public void setLivePreviewFileName(String livePreviewFileName) {
-        this.livePreviewFileName = livePreviewFileName;
+    public void setPreviewPayloadCacheIntervalMillis(long previewPayloadCacheIntervalMillis) {
+        this.previewPayloadCacheIntervalMillis = previewPayloadCacheIntervalMillis;
     }
 
-    public long getLivePreviewWriteIntervalMillis() {
-        return livePreviewWriteIntervalMillis;
+    public boolean isPreviewDiagnosticsEnabled() {
+        return previewDiagnosticsEnabled;
     }
 
-    public void setLivePreviewWriteIntervalMillis(long livePreviewWriteIntervalMillis) {
-        this.livePreviewWriteIntervalMillis = livePreviewWriteIntervalMillis;
+    public void setPreviewDiagnosticsEnabled(boolean previewDiagnosticsEnabled) {
+        this.previewDiagnosticsEnabled = previewDiagnosticsEnabled;
+    }
+
+    public long getPreviewDiagnosticsIntervalMillis() {
+        return previewDiagnosticsIntervalMillis;
+    }
+
+    public void setPreviewDiagnosticsIntervalMillis(long previewDiagnosticsIntervalMillis) {
+        this.previewDiagnosticsIntervalMillis = previewDiagnosticsIntervalMillis;
     }
 
     public boolean isConsoleRunnerEnabled() {

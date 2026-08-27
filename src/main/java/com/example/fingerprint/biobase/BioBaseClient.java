@@ -163,8 +163,15 @@ public class BioBaseClient {
         }
     }
 
+    public BioBaseNative.BioBData readNativeData(Pointer data) {
+        return new BioBaseNative.BioBData(data);
+    }
+
     public CapturedData readData(String deviceId, int dataStatus, Pointer data, int detectedObjects) {
-        BioBaseNative.BioBData nativeData = new BioBaseNative.BioBData(data);
+        return readData(deviceId, dataStatus, readNativeData(data), detectedObjects);
+    }
+
+    public CapturedData readData(String deviceId, int dataStatus, BioBaseNative.BioBData nativeData, int detectedObjects) {
         byte[] bytes = nativeData.buffer == null || nativeData.bufferSize <= 0
                 ? new byte[0]
                 : nativeData.buffer.getByteArray(0, nativeData.bufferSize);

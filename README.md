@@ -29,7 +29,7 @@ Varsayilan olarak uygulama acilinca console runner calisir:
 1. BioBase sistemini acar.
 2. Ilk cihazi bulup acar.
 3. Capture baslatir.
-4. Capture bitene kadar son preview callback'ini `captures/preview-live.bmp` dosyasina periyodik olarak yazar.
+4. Capture bitene kadar son preview callback'ini bellekte tutar.
 5. Final capture gelince `captures/capture-...` dosyasina yazar.
 
 REST controller uygulamada kalir. Console runner'i kapatmak istersen:
@@ -100,11 +100,12 @@ fingerprint.auto-capture-override-time=4000
 fingerprint.auto-capture-override-mode=OnInsufficientCount
 fingerprint.capture-timeout-seconds=0
 fingerprint.preview-image-format=
-fingerprint.preview-level=Low
+fingerprint.preview-level=Medium
 fingerprint.preview-timeout-seconds=5
-fingerprint.live-preview-file-enabled=true
-fingerprint.live-preview-file-name=preview-live
-fingerprint.live-preview-write-interval-millis=100
+fingerprint.preview-payload-cache-enabled=true
+fingerprint.preview-payload-cache-interval-millis=0
+fingerprint.preview-diagnostics-enabled=true
+fingerprint.preview-diagnostics-interval-millis=5000
 fingerprint.console-runner-enabled=true
 fingerprint.console-close-when-done=false
 fingerprint.capture-success-beep-enabled=true
@@ -125,9 +126,9 @@ fingerprint.auto-capture-override-mode=OnInsufficientCount
 fingerprint.auto-capture-override-time=4000
 ```
 
-Live preview dosyasi callback thread'i icinde yazilmaz. Callback yalnizca native preview buffer'ini Java byte dizisine kopyalar; dosya yazma islemi ayri bir worker thread tarafindan yapilir. Bu, BioBase dokumanindaki callback thread'i icinden LSE/BioBase API cagrisi yapmama uyarisina uygun kalmak icindir.
-Live preview dosyasi once gecici dosyaya yazilir, sonra atomik olarak asil dosyanin yerine tasinir. Bu, resmi izleyen uygulamanin yarim yazilmis frame okumasini azaltir.
-FIR preview frame'leri hiz icin yalnizca ilk view uzerinden BMP'ye cevrilir; final capture kaydinda ise en buyuk FIR view ana image olarak secilmeye devam eder.
+Live preview callback thread'i icinde dosyaya yazilmaz ve BioBase API cagrisi yapilmaz. Callback native preview header'ini okur; `fingerprint.preview-payload-cache-enabled=true` ise payload'i Java byte dizisine kopyalayip son preview state'ini gunceller. `fingerprint.preview-payload-cache-interval-millis=0` her frame'i cacheler; `50` gibi bir deger Java tarafina saniyede yaklasik 20 frame tasir. Bu, BioBase dokumanindaki callback thread'i icinden LSE/BioBase API cagrisi yapmama uyarisina uygun kalmak ve preview akisini yavaslatmamak icindir. Preview'i dosyaya almak gerekirse `/api/fingerprint/preview/save` manuel olarak cagrilabilir.
+
+`fingerprint.preview-diagnostics-enabled=true` iken capture basinda cihaz preview property'leri loglanir, capture sirasinda da belirli araliklarla preview FPS, cachelenen frame sayisi ve ortalama byte-copy suresi yazilir. Donma analizi icin once bu loglara bakmak gerekir. SDK ornek uygulamasindaki en hizli yol `BioB_SetVisualizationWindow()` ile native preview'i dogrudan Win32 pencereye cizdirmektir; Spring console uygulamasinda pencere handle'i olmadigi icin bu yol ancak dis arayuz uygulamasi bir HWND saglarsa kullanilabilir.
 
 Capture sirasinda SDK'nin `BIOB_OBJECT_COUNT` ve `BIOB_OBJECT_QUALITY` callbackleri de dinlenir. Callback thread'i icinde yalnizca native degerler Java listesine kopyalanir; SDK/BioBase API cagrisi yapilmaz. Son canli state `/api/fingerprint/devices/{deviceId}/status` ve capture response icindeki `objectCount` / `objectQualities` alanlarinda gorulebilir.
 
@@ -135,4 +136,4 @@ Segment bbox akisi oncelik sirasiyla calisir: preview callback icindeki `BioBSce
 
 Capture basariyla kaydedildikten sonra `BioB_SetOutputData` ile cihaz beeper'i tetiklenir. Bunu kapatmak icin `fingerprint.capture-success-beep-enabled=false` verilebilir; pattern ve volume propertylerden degistirilebilir. Cihaz beeper desteklemiyorsa capture basarili kalir, yalnizca warn log basilir.
 
-`fingerprint.capture-timeout-seconds=0` final capture gelene kadar bekler. Pozitif bir deger verirsen sure dolunca acquisition iptal edilir. `fingerprint.preview-image-format` varsayilan olarak bostur; cihazin `PREVIEW_IMAGE_FORMAT` property set etmeyi desteklediginden eminsen `BMP` veya `JPG` olarak acabilirsin. `fingerprint.preview-level=Low` sadece live preview boyutu/akiciligi icindir, final capture kalitesini dusurmez.
+`fingerprint.capture-timeout-seconds=0` final capture gelene kadar bekler. Pozitif bir deger verirsen sure dolunca acquisition iptal edilir. `fingerprint.preview-image-format` varsayilan olarak bostur; cihazin `PREVIEW_IMAGE_FORMAT` property set etmeyi desteklediginden eminsen `BMP` veya `JPG` olarak acabilirsin.

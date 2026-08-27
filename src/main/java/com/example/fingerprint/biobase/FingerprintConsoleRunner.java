@@ -44,7 +44,7 @@ public class FingerprintConsoleRunner implements ApplicationRunner {
             log.info("Opening first BioBase device: {} / {}", device.modelName(), deviceId);
             service.openDevice(deviceId, false);
 
-            log.info("Starting capture. Preview will be saved first, final capture will be saved when available.");
+            log.info("Starting capture. Preview will be kept in memory, final capture will be saved when available.");
             CaptureResponse capture = service.capture(
                     deviceId,
                     properties.getDefaultPosition(),

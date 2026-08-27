@@ -15,7 +15,6 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -23,11 +22,10 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.imageio.ImageIO;
 
@@ -35,7 +33,6 @@ import com.sun.jna.Memory;
 import com.sun.jna.Pointer;
 import com.sun.jna.ptr.IntByReference;
 import com.sun.jna.ptr.PointerByReference;
-import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -63,6 +60,9 @@ public class FingerprintCaptureService {
     private static final String PROP_SPOOF_DETECTION_SUPPORTED = "DEVICE_SPOOF_DETECTION_SUPPORTED";
     private static final String PROP_PREVIEW_IMAGE_FORMAT = "PREVIEW_IMAGE_FORMAT";
     private static final String PROP_PREVIEW_LEVEL = "PREVIEW_LEVEL";
+    private static final String PROP_AVAILABLE_PREVIEW_LEVELS = "AVAILABLE_PREVIEW_LEVELS";
+    private static final String PROP_DEVICE_PREVIEW_FRAME_RATE = "DEVICE_FRAME_RATE";
+    private static final String PROP_ENCODING_FORMATS_SUPPORTED = "ENCODING_FORMATS_SUPPORTED";
 
     private final BioBaseClient client;
     private final FingerprintProperties properties;
@@ -72,17 +72,14 @@ public class FingerprintCaptureService {
     private final AtomicReference<Integer> lastObjectCountState = new AtomicReference<>();
     private final AtomicReference<List<Integer>> lastObjectQualityStates = new AtomicReference<>(List.of());
     private final AtomicReference<CompletableFuture<CapturedData>> pendingCapture = new AtomicReference<>();
-    private final AtomicReference<CapturedData> livePreviewToWrite = new AtomicReference<>();
-    private final AtomicBoolean livePreviewWriterRunning = new AtomicBoolean(false);
     private final AtomicBoolean previewSeenLogged = new AtomicBoolean(false);
-    private final AtomicBoolean livePreviewSavedLogged = new AtomicBoolean(false);
-    private final ExecutorService previewWriter = Executors.newSingleThreadExecutor(runnable -> {
-        Thread thread = new Thread(runnable, "biobase-live-preview-writer");
-        thread.setDaemon(true);
-        return thread;
-    });
+    private final AtomicLong lastPreviewCachedAtMillis = new AtomicLong(0);
+    private final AtomicLong previewMetricWindowStartedAtMillis = new AtomicLong(0);
+    private final AtomicLong previewMetricFrames = new AtomicLong(0);
+    private final AtomicLong previewMetricCachedFrames = new AtomicLong(0);
+    private final AtomicLong previewMetricBytes = new AtomicLong(0);
+    private final AtomicLong previewMetricCopyNanos = new AtomicLong(0);
     private volatile String activeDeviceId;
-    private volatile boolean livePreviewActive;
 
     private final BioBaseNative.PreviewCallback previewCallback;
     private final BioBaseNative.AcquisitionStartedCallback startedCallback;
@@ -96,20 +93,27 @@ public class FingerprintCaptureService {
         this.properties = properties;
         this.previewCallback = (deviceId, context, data) -> {
             if (data != null) {
-                CapturedData preview = client.readData(deviceId, 0, data, 0);
-                if (preview.bytes().length > 0) {
-                    if (preview.format() == BIOB_FIR) {
-                        lastPreviewSegmentation.set(FingerSegmentation.empty());
-                    } else {
-                        lastPreviewSegmentation.set(readPreviewSegmentation(data));
+                BioBaseNative.BioBData nativeData = client.readNativeData(data);
+                BioBaseDataFormat format = BioBaseDataFormat.fromValue(nativeData.formatType);
+                int bufferSize = Math.max(nativeData.bufferSize, 0);
+                if (previewSeenLogged.compareAndSet(false, true)) {
+                    log.info("First preview received: format={}, bytes={}", format, bufferSize);
+                }
+                if (shouldCachePreviewPayload()) {
+                    long copyStartedAtNanos = System.nanoTime();
+                    CapturedData preview = client.readData(deviceId, 0, nativeData, 0);
+                    long copyNanos = System.nanoTime() - copyStartedAtNanos;
+                    if (preview.bytes().length > 0) {
+                        if (preview.format() == BIOB_FIR) {
+                            lastPreviewSegmentation.set(FingerSegmentation.empty());
+                        } else {
+                            lastPreviewSegmentation.set(readPreviewSegmentation(nativeData));
+                        }
+                        lastPreview.set(preview);
                     }
-                    if (previewSeenLogged.compareAndSet(false, true)) {
-                        log.info("First preview received: format={}, bytes={}", preview.format(), preview.bytes().length);
-                    }
-                    lastPreview.set(preview);
-                    if (livePreviewActive && properties.isLivePreviewFileEnabled()) {
-                        livePreviewToWrite.set(preview);
-                    }
+                    recordPreviewMetrics(format, bufferSize, true, copyNanos);
+                } else {
+                    recordPreviewMetrics(format, bufferSize, false, 0);
                 }
             }
         };
@@ -205,8 +209,8 @@ public class FingerprintCaptureService {
 
         try {
             clearLiveObjectState();
+            resetPreviewState();
             configureCaptureProperties(deviceId, blankToDefault(impression, properties.getDefaultImpression()));
-            startLivePreviewWriter();
             client.beginAcquisition(
                     deviceId,
                     blankToDefault(position, properties.getDefaultPosition()),
@@ -236,7 +240,6 @@ public class FingerprintCaptureService {
             throw new BioBaseException("Capture failed: " + e.getMessage());
         } finally {
             pendingCapture.compareAndSet(future, null);
-            stopLivePreviewWriter();
         }
     }
 
@@ -429,9 +432,8 @@ public class FingerprintCaptureService {
         return bmpBuffer;
     }
 
-    private FingerSegmentation readPreviewSegmentation(Pointer data) {
+    private FingerSegmentation readPreviewSegmentation(BioBaseNative.BioBData nativeData) {
         try {
-            BioBaseNative.BioBData nativeData = new BioBaseNative.BioBData(data);
             if (nativeData.extStruct == null || Pointer.nativeValue(nativeData.extStruct) == 0) {
                 log.debug("Preview segmentation extStruct is not available for format={}", BioBaseDataFormat.fromValue(nativeData.formatType));
                 return FingerSegmentation.empty();
@@ -848,6 +850,70 @@ public class FingerprintCaptureService {
         return image.getWidth() * image.getHeight();
     }
 
+    private boolean shouldCachePreviewPayload() {
+        if (!properties.isPreviewPayloadCacheEnabled()) {
+            return false;
+        }
+        long intervalMillis = properties.getPreviewPayloadCacheIntervalMillis();
+        if (intervalMillis <= 0) {
+            return true;
+        }
+
+        long now = System.currentTimeMillis();
+        long previous = lastPreviewCachedAtMillis.get();
+        return now - previous >= intervalMillis && lastPreviewCachedAtMillis.compareAndSet(previous, now);
+    }
+
+    private void resetPreviewState() {
+        previewSeenLogged.set(false);
+        lastPreviewCachedAtMillis.set(0);
+        previewMetricWindowStartedAtMillis.set(System.currentTimeMillis());
+        previewMetricFrames.set(0);
+        previewMetricCachedFrames.set(0);
+        previewMetricBytes.set(0);
+        previewMetricCopyNanos.set(0);
+    }
+
+    private void recordPreviewMetrics(BioBaseDataFormat format, int bytes, boolean cached, long copyNanos) {
+        if (!properties.isPreviewDiagnosticsEnabled()) {
+            return;
+        }
+        previewMetricFrames.incrementAndGet();
+        if (cached) {
+            previewMetricCachedFrames.incrementAndGet();
+            previewMetricBytes.addAndGet(bytes);
+            previewMetricCopyNanos.addAndGet(copyNanos);
+        }
+
+        long intervalMillis = properties.getPreviewDiagnosticsIntervalMillis();
+        if (intervalMillis <= 0) {
+            return;
+        }
+
+        long now = System.currentTimeMillis();
+        long windowStart = previewMetricWindowStartedAtMillis.get();
+        if (now - windowStart < intervalMillis || !previewMetricWindowStartedAtMillis.compareAndSet(windowStart, now)) {
+            return;
+        }
+
+        long frames = previewMetricFrames.getAndSet(0);
+        long cachedFrames = previewMetricCachedFrames.getAndSet(0);
+        long totalBytes = previewMetricBytes.getAndSet(0);
+        long totalCopyNanos = previewMetricCopyNanos.getAndSet(0);
+        long elapsedMillis = Math.max(now - windowStart, 1);
+        double fps = frames * 1000.0 / elapsedMillis;
+        double cachedFps = cachedFrames * 1000.0 / elapsedMillis;
+        double avgCopyMillis = cachedFrames == 0 ? 0.0 : (totalCopyNanos / 1_000_000.0) / cachedFrames;
+        long avgBytes = cachedFrames == 0 ? 0 : totalBytes / cachedFrames;
+        log.info("Preview metrics: format={}, frames={}, fps={}, cachedFrames={}, cachedFps={}, avgBytes={}, avgCopyMs={}",
+                format, frames, round(fps, 1), cachedFrames, round(cachedFps, 1), avgBytes, round(avgCopyMillis, 3));
+    }
+
+    private static double round(double value, int scale) {
+        double factor = Math.pow(10, scale);
+        return Math.round(value * factor) / factor;
+    }
+
     private void unregisterCallbacks(String deviceId) {
         client.registerCallback(deviceId, BioBaseEvent.BIOB_PREVIEW, null);
         client.registerCallback(deviceId, BioBaseEvent.BIOB_OBJECT_QUALITY, null);
@@ -922,8 +988,28 @@ public class FingerprintCaptureService {
     }
 
     private void configurePreview(String deviceId) {
+        logPreviewCapabilities(deviceId);
         setOptionalProperty(deviceId, PROP_PREVIEW_IMAGE_FORMAT, properties.getPreviewImageFormat());
         setOptionalProperty(deviceId, PROP_PREVIEW_LEVEL, properties.getPreviewLevel());
+    }
+
+    private void logPreviewCapabilities(String deviceId) {
+        if (!properties.isPreviewDiagnosticsEnabled()) {
+            return;
+        }
+        logOptionalPreviewProperty(deviceId, PROP_AVAILABLE_PREVIEW_LEVELS);
+        logOptionalPreviewProperty(deviceId, PROP_DEVICE_PREVIEW_FRAME_RATE);
+        logOptionalPreviewProperty(deviceId, PROP_ENCODING_FORMATS_SUPPORTED);
+        logOptionalPreviewProperty(deviceId, PROP_PREVIEW_IMAGE_FORMAT);
+        logOptionalPreviewProperty(deviceId, PROP_PREVIEW_LEVEL);
+    }
+
+    private void logOptionalPreviewProperty(String deviceId, String propertyName) {
+        try {
+            log.info("BioBase preview property {}={}", propertyName, client.getProperty(deviceId, propertyName));
+        } catch (BioBaseException e) {
+            log.debug("BioBase preview property {} is not readable: {}", propertyName, e.getMessage());
+        }
     }
 
     private Optional<String> getOptionalProperty(String deviceId, String propertyName) {
@@ -943,92 +1029,6 @@ public class FingerprintCaptureService {
             client.setProperty(deviceId, propertyName, value);
         } catch (BioBaseException e) {
             log.warn("Could not set optional BioBase property {}={}: {}", propertyName, value, e.getMessage());
-        }
-    }
-
-    private void startLivePreviewWriter() {
-        if (!properties.isLivePreviewFileEnabled()) {
-            return;
-        }
-        previewSeenLogged.set(false);
-        livePreviewSavedLogged.set(false);
-        livePreviewActive = true;
-        livePreviewToWrite.set(null);
-        if (!livePreviewWriterRunning.compareAndSet(false, true)) {
-            return;
-        }
-        previewWriter.execute(() -> {
-            try {
-                while (livePreviewActive || livePreviewToWrite.get() != null) {
-                    CapturedData preview = livePreviewToWrite.getAndSet(null);
-                    if (preview != null) {
-                        saveLivePreview(preview);
-                    }
-                    Thread.sleep(Math.max(25, properties.getLivePreviewWriteIntervalMillis()));
-                }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            } catch (Exception e) {
-                log.warn("Live preview writer failed: {}", e.getMessage());
-            } finally {
-                livePreviewWriterRunning.set(false);
-                if (livePreviewActive) {
-                    startLivePreviewWriter();
-                }
-            }
-        });
-    }
-
-    private void stopLivePreviewWriter() {
-        livePreviewActive = false;
-    }
-
-    private void saveLivePreview(CapturedData data) {
-        try {
-            CapturedData image = toLivePreviewImageData(data);
-            Files.createDirectories(properties.getOutputDir());
-            Path path = properties.getOutputDir()
-                    .resolve(properties.getLivePreviewFileName() + "." + image.format().extension())
-                    .toAbsolutePath();
-            writeAtomic(path, image.bytes());
-            if (livePreviewSavedLogged.compareAndSet(false, true)) {
-                log.info("Live preview image is being updated at {}", path);
-            }
-        } catch (Exception e) {
-            log.warn("Could not write live preview image: {}", e.getMessage());
-        }
-    }
-
-    private CapturedData toLivePreviewImageData(CapturedData data) {
-        if (data.format() != BIOB_FIR) {
-            return data;
-        }
-
-        try {
-            byte[] bmpBytes = firToBmp(data.bytes(), false);
-            return new CapturedData(
-                    data.deviceId(),
-                    BIOB_BMP,
-                    data.finalImage(),
-                    data.dataStatus(),
-                    data.detectedObjects(),
-                    bmpBytes,
-                    data.savedPath(),
-                    data.capturedAt()
-            );
-        } catch (Exception e) {
-            log.warn("Could not convert preview FIR to BMP, saving raw FIR data instead: {}", e.getMessage());
-            return data;
-        }
-    }
-
-    private void writeAtomic(Path path, byte[] bytes) throws IOException {
-        Path tempPath = path.resolveSibling(path.getFileName() + ".tmp");
-        Files.write(tempPath, bytes);
-        try {
-            Files.move(tempPath, path, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-        } catch (IOException e) {
-            Files.move(tempPath, path, StandardCopyOption.REPLACE_EXISTING);
         }
     }
 
@@ -1282,10 +1282,5 @@ public class FingerprintCaptureService {
         int averageDifference() {
             return totalDifference;
         }
-    }
-
-    @PreDestroy
-    void shutdownPreviewWriter() {
-        previewWriter.shutdownNow();
     }
 }

@@ -30,7 +30,10 @@ public class FingerprintProperties {
     private boolean consoleCloseWhenDone = false;
     private boolean captureSuccessBeepEnabled = true;
     private String captureSuccessBeepPattern = "3";
-    private String captureSuccessBeepVolume = "50";
+    private String captureSuccessBeepVolume = "100";
+    private boolean captureProgressBeepEnabled = true;
+    private String captureProgressBeepPattern = "2";
+    private String captureProgressBeepVolume = "100";
 
     public Path getOutputDir() {
         return outputDir;
@@ -238,5 +241,29 @@ public class FingerprintProperties {
 
     public void setCaptureSuccessBeepVolume(String captureSuccessBeepVolume) {
         this.captureSuccessBeepVolume = captureSuccessBeepVolume;
+    }
+
+    public boolean isCaptureProgressBeepEnabled() {
+        return captureProgressBeepEnabled;
+    }
+
+    public void setCaptureProgressBeepEnabled(boolean captureProgressBeepEnabled) {
+        this.captureProgressBeepEnabled = captureProgressBeepEnabled;
+    }
+
+    public String getCaptureProgressBeepPattern() {
+        return captureProgressBeepPattern;
+    }
+
+    public void setCaptureProgressBeepPattern(String captureProgressBeepPattern) {
+        this.captureProgressBeepPattern = captureProgressBeepPattern;
+    }
+
+    public String getCaptureProgressBeepVolume() {
+        return captureProgressBeepVolume;
+    }
+
+    public void setCaptureProgressBeepVolume(String captureProgressBeepVolume) {
+        this.captureProgressBeepVolume = captureProgressBeepVolume;
     }
 }

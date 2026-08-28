@@ -22,6 +22,8 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -63,16 +65,26 @@ public class FingerprintCaptureService {
     private static final String PROP_AVAILABLE_PREVIEW_LEVELS = "AVAILABLE_PREVIEW_LEVELS";
     private static final String PROP_DEVICE_PREVIEW_FRAME_RATE = "DEVICE_FRAME_RATE";
     private static final String PROP_ENCODING_FORMATS_SUPPORTED = "ENCODING_FORMATS_SUPPORTED";
+    private static final String PROP_DEVICE_BEEPER_TYPE = "DEVICE_BEEPER_TYPE";
+    private static final String PROP_BEEPER_NONE = "BEEPER_NONE";
 
     private final BioBaseClient client;
     private final FingerprintProperties properties;
+    private final ExecutorService deviceOutputExecutor = Executors.newSingleThreadExecutor(r -> {
+        Thread thread = new Thread(r, "biobase-device-output");
+        thread.setDaemon(true);
+        return thread;
+    });
     private final AtomicReference<CapturedData> lastPreview = new AtomicReference<>();
     private final AtomicReference<FingerSegmentation> lastPreviewSegmentation = new AtomicReference<>(FingerSegmentation.empty());
     private final AtomicReference<CapturedData> lastCapture = new AtomicReference<>();
     private final AtomicReference<Integer> lastObjectCountState = new AtomicReference<>();
     private final AtomicReference<List<Integer>> lastObjectQualityStates = new AtomicReference<>(List.of());
     private final AtomicReference<CompletableFuture<CapturedData>> pendingCapture = new AtomicReference<>();
+    private final AtomicReference<String> activeImpression = new AtomicReference<>();
     private final AtomicBoolean previewSeenLogged = new AtomicBoolean(false);
+    private final AtomicBoolean captureSuccessBeepSent = new AtomicBoolean(false);
+    private final AtomicBoolean captureProgressBeepSent = new AtomicBoolean(false);
     private final AtomicLong lastPreviewCachedAtMillis = new AtomicLong(0);
     private final AtomicLong previewMetricWindowStartedAtMillis = new AtomicLong(0);
     private final AtomicLong previewMetricFrames = new AtomicLong(0);
@@ -117,8 +129,7 @@ public class FingerprintCaptureService {
                 }
             }
         };
-        this.startedCallback = (deviceId, context, reserved) -> {
-        };
+        this.startedCallback = (deviceId, context, reserved) -> enqueueCaptureProgressBeep(deviceId);
         this.completedCallback = (deviceId, context, reserved) -> {
         };
         this.dataAvailableCallback = (deviceId, context, dataStatus, data, detectedObjects) -> {
@@ -132,6 +143,7 @@ public class FingerprintCaptureService {
                     if (future != null) {
                         future.complete(capture);
                     }
+                    enqueueCaptureSuccessBeep(deviceId);
                 }
             }
         };
@@ -210,11 +222,13 @@ public class FingerprintCaptureService {
         try {
             clearLiveObjectState();
             resetPreviewState();
-            configureCaptureProperties(deviceId, blankToDefault(impression, properties.getDefaultImpression()));
+            String effectiveImpression = blankToDefault(impression, properties.getDefaultImpression());
+            activeImpression.set(effectiveImpression);
+            configureCaptureProperties(deviceId, effectiveImpression);
             client.beginAcquisition(
                     deviceId,
                     blankToDefault(position, properties.getDefaultPosition()),
-                    blankToDefault(impression, properties.getDefaultImpression())
+                    effectiveImpression
             );
             long timeout = timeoutSeconds == null ? properties.getCaptureTimeoutSeconds() : timeoutSeconds;
             CapturedData captured = waitForCapture(future, timeout);
@@ -229,7 +243,6 @@ public class FingerprintCaptureService {
             }
             Path annotatedPath = saveAnnotatedCapture(saved, segmentation);
             lastCapture.set(saved);
-            beepCaptureSuccess(deviceId);
             return toResponse(saved, segmentation, annotatedPath);
         } catch (TimeoutException e) {
             client.cancelAcquisition(deviceId);
@@ -240,6 +253,7 @@ public class FingerprintCaptureService {
             throw new BioBaseException("Capture failed: " + e.getMessage());
         } finally {
             pendingCapture.compareAndSet(future, null);
+            activeImpression.set(null);
         }
     }
 
@@ -866,6 +880,8 @@ public class FingerprintCaptureService {
 
     private void resetPreviewState() {
         previewSeenLogged.set(false);
+        captureSuccessBeepSent.set(false);
+        captureProgressBeepSent.set(false);
         lastPreviewCachedAtMillis.set(0);
         previewMetricWindowStartedAtMillis.set(System.currentTimeMillis());
         previewMetricFrames.set(0);
@@ -928,6 +944,7 @@ public class FingerprintCaptureService {
         configureAutoCapture(deviceId);
         configureSpoofDetection(deviceId);
         configurePreview(deviceId);
+        logBeeperCapability(deviceId);
     }
 
     private void configureCoreCaptureProperties(String deviceId, String impression) {
@@ -991,6 +1008,11 @@ public class FingerprintCaptureService {
         logPreviewCapabilities(deviceId);
         setOptionalProperty(deviceId, PROP_PREVIEW_IMAGE_FORMAT, properties.getPreviewImageFormat());
         setOptionalProperty(deviceId, PROP_PREVIEW_LEVEL, properties.getPreviewLevel());
+    }
+
+    private void logBeeperCapability(String deviceId) {
+        getOptionalProperty(deviceId, PROP_DEVICE_BEEPER_TYPE)
+                .ifPresent(type -> log.info("BioBase device beeper type: {}", type));
     }
 
     private void logPreviewCapabilities(String deviceId) {
@@ -1124,13 +1146,41 @@ public class FingerprintCaptureService {
         }
     }
 
-    private void beepCaptureSuccess(String deviceId) {
+    private void enqueueCaptureProgressBeep(String deviceId) {
+        if (!properties.isCaptureProgressBeepEnabled() || !isRollImpression(activeImpression.get())) {
+            return;
+        }
+        if (!captureProgressBeepSent.compareAndSet(false, true)) {
+            return;
+        }
+        String pattern = blankToDefault(properties.getCaptureProgressBeepPattern(), "2");
+        String volume = blankToDefault(properties.getCaptureProgressBeepVolume(), "100");
+        enqueueBeep(deviceId, pattern, volume, "capture progress");
+    }
+
+    private void enqueueCaptureSuccessBeep(String deviceId) {
         if (!properties.isCaptureSuccessBeepEnabled()) {
             return;
         }
-
+        if (!captureSuccessBeepSent.compareAndSet(false, true)) {
+            return;
+        }
         String pattern = blankToDefault(properties.getCaptureSuccessBeepPattern(), "3");
-        String volume = blankToDefault(properties.getCaptureSuccessBeepVolume(), "50");
+        String volume = blankToDefault(properties.getCaptureSuccessBeepVolume(), "100");
+        enqueueBeep(deviceId, pattern, volume, "capture success");
+    }
+
+    private void enqueueBeep(String deviceId, String pattern, String volume, String reason) {
+        deviceOutputExecutor.execute(() -> sendBeep(deviceId, pattern, volume, reason));
+    }
+
+    private void sendBeep(String deviceId, String pattern, String volume, String reason) {
+        Optional<String> beeperType = getOptionalProperty(deviceId, PROP_DEVICE_BEEPER_TYPE);
+        if (beeperType.map(type -> PROP_BEEPER_NONE.equalsIgnoreCase(type.trim())).orElse(false)) {
+            log.warn("Skipping {} beep because device reports {}", reason, PROP_BEEPER_NONE);
+            return;
+        }
+
         String xml = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"true\"?>"
                 + "<BioBase Version=\"4.0\" "
                 + "xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" "
@@ -1142,10 +1192,15 @@ public class FingerprintCaptureService {
 
         try {
             client.setOutputXml(deviceId, xml);
-            log.info("Capture success beep sent: pattern={}, volume={}", pattern, volume);
+            log.info("{} beep sent: pattern={}, volume={}, beeperType={}",
+                    reason, pattern, volume, beeperType.orElse("unknown"));
         } catch (BioBaseException e) {
-            log.warn("Could not send capture success beep: {}", e.getMessage());
+            log.warn("Could not send {} beep: {}", reason, e.getMessage());
         }
+    }
+
+    private static boolean isRollImpression(String impression) {
+        return impression != null && impression.toLowerCase(java.util.Locale.ROOT).contains("roll");
     }
 
     private String resolveDeviceId(String requestedDeviceId) {

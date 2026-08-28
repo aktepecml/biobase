@@ -111,7 +111,10 @@ fingerprint.console-runner-enabled=true
 fingerprint.console-close-when-done=false
 fingerprint.capture-success-beep-enabled=true
 fingerprint.capture-success-beep-pattern=3
-fingerprint.capture-success-beep-volume=50
+fingerprint.capture-success-beep-volume=100
+fingerprint.capture-progress-beep-enabled=true
+fingerprint.capture-progress-beep-pattern=2
+fingerprint.capture-progress-beep-volume=100
 ```
 
 `ACTIVE_AREA`, `IMAGE_RESOLUTION`, `AUTOCONTRAST_ON`, preview format/level, spoof detection ve auto-capture override ayarlari capture oncesi uygulanir. Opsiyonel property'ler cihazda desteklenmiyorsa uygulama uyarı loglayip capture'a devam eder.
@@ -135,6 +138,6 @@ Capture sirasinda SDK'nin `BIOB_OBJECT_COUNT` ve `BIOB_OBJECT_QUALITY` callbackl
 
 Segment bbox akisi oncelik sirasiyla calisir: preview callback icindeki `BioBScene/BioBROI`, FIR icindeki ayri view/segment imagelarinin ana capture image uzerinde eslestirilmesi, son olarak sadece capture image uzerinden yapilan basit goruntu fallback'i. FIR icindeki en buyuk view ana capture image olarak kaydedilir.
 
-Capture basariyla kaydedildikten sonra `BioB_SetOutputData` ile cihaz beeper'i tetiklenir. Bunu kapatmak icin `fingerprint.capture-success-beep-enabled=false` verilebilir; pattern ve volume propertylerden degistirilebilir. Cihaz beeper desteklemiyorsa capture basarili kalir, yalnizca warn log basilir.
+Final image `BIOB_DATA_AVAILABLE` ile geldikten hemen sonra `BioB_SetOutputData` ile cihaz beeper'i tetiklenir. Bunu kapatmak icin `fingerprint.capture-success-beep-enabled=false` verilebilir; pattern ve volume propertylerden degistirilebilir. Roll capture'da `BIOB_ACQUISITION_STARTED` event'i geldiğinde, callback thread'i disindan, ayrica progress beep gonderilir; bunu `fingerprint.capture-progress-beep-enabled=false` ile kapatabilirsin. Cihaz `DEVICE_BEEPER_TYPE=BEEPER_NONE` donerse beep atlanir ve warn log basilir.
 
 `fingerprint.capture-timeout-seconds=0` final capture gelene kadar bekler. Pozitif bir deger verirsen sure dolunca acquisition iptal edilir. `fingerprint.preview-image-format` varsayilan olarak bostur; cihazin `PREVIEW_IMAGE_FORMAT` property set etmeyi desteklediginden eminsen `BMP` veya `JPG` olarak acabilirsin.

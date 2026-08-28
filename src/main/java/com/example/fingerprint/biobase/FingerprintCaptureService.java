@@ -232,7 +232,7 @@ public class FingerprintCaptureService {
             long timeout = timeoutSeconds == null ? properties.getCaptureTimeoutSeconds() : timeoutSeconds;
             CapturedData captured = waitForCapture(future, timeout);
             waitUntilAcquisitionStopped(deviceId);
-            enqueueCaptureSuccessBeep(deviceId);
+            sendCaptureSuccessBeep(deviceId);
             FingerSegmentation segmentation = lastPreviewSegmentation.get();
             CapturedData saved = saveAsImage(captured, "capture");
             if (segmentation.segments().isEmpty()) {
@@ -1158,7 +1158,7 @@ public class FingerprintCaptureService {
         enqueueBeep(deviceId, pattern, volume, "capture progress");
     }
 
-    private void enqueueCaptureSuccessBeep(String deviceId) {
+    private void sendCaptureSuccessBeep(String deviceId) {
         if (!properties.isCaptureSuccessBeepEnabled()) {
             return;
         }
@@ -1167,7 +1167,9 @@ public class FingerprintCaptureService {
         }
         String pattern = blankToDefault(properties.getCaptureSuccessBeepPattern(), "3");
         String volume = blankToDefault(properties.getCaptureSuccessBeepVolume(), "100");
-        enqueueBeep(deviceId, pattern, volume, "capture success", properties.getCaptureSuccessBeepDelayMillis());
+        sendBeepWithRetry(deviceId, pattern, volume, "capture success",
+                properties.getCaptureSuccessBeepDelayMillis(),
+                properties.getCaptureSuccessBeepRetries());
     }
 
     private void enqueueBeep(String deviceId, String pattern, String volume, String reason) {
@@ -1210,6 +1212,28 @@ public class FingerprintCaptureService {
                     reason, pattern, volume, beeperType.orElse("unknown"));
         } catch (BioBaseException e) {
             log.warn("Could not send {} beep: {}", reason, e.getMessage());
+        }
+    }
+
+    private void sendBeepWithRetry(String deviceId, String pattern, String volume, String reason, long delayMillis, int retries) {
+        int attempts = Math.max(1, retries + 1);
+        long currentDelayMillis = Math.max(0, delayMillis);
+        for (int attempt = 1; attempt <= attempts; attempt++) {
+            if (currentDelayMillis > 0) {
+                sleepBeforeBeep(currentDelayMillis, reason, attempt);
+            }
+            log.info("Sending {} beep attempt {}/{}", reason, attempt, attempts);
+            sendBeep(deviceId, pattern, volume, reason);
+            currentDelayMillis = Math.max(currentDelayMillis * 2, 250);
+        }
+    }
+
+    private static void sleepBeforeBeep(long delayMillis, String reason, int attempt) {
+        try {
+            Thread.sleep(delayMillis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new BioBaseException("Interrupted before " + reason + " beep attempt " + attempt);
         }
     }
 

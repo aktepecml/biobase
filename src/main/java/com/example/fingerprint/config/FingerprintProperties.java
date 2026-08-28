@@ -32,6 +32,7 @@ public class FingerprintProperties {
     private String captureSuccessBeepPattern = "3";
     private String captureSuccessBeepVolume = "100";
     private long captureSuccessBeepDelayMillis = 200;
+    private int captureSuccessBeepRetries = 2;
     private boolean captureProgressBeepEnabled = true;
     private String captureProgressBeepPattern = "2";
     private String captureProgressBeepVolume = "100";
@@ -250,6 +251,14 @@ public class FingerprintProperties {
 
     public void setCaptureSuccessBeepDelayMillis(long captureSuccessBeepDelayMillis) {
         this.captureSuccessBeepDelayMillis = captureSuccessBeepDelayMillis;
+    }
+
+    public int getCaptureSuccessBeepRetries() {
+        return captureSuccessBeepRetries;
+    }
+
+    public void setCaptureSuccessBeepRetries(int captureSuccessBeepRetries) {
+        this.captureSuccessBeepRetries = captureSuccessBeepRetries;
     }
 
     public boolean isCaptureProgressBeepEnabled() {

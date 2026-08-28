@@ -143,7 +143,6 @@ public class FingerprintCaptureService {
                     if (future != null) {
                         future.complete(capture);
                     }
-                    enqueueCaptureSuccessBeep(deviceId);
                 }
             }
         };
@@ -233,6 +232,7 @@ public class FingerprintCaptureService {
             long timeout = timeoutSeconds == null ? properties.getCaptureTimeoutSeconds() : timeoutSeconds;
             CapturedData captured = waitForCapture(future, timeout);
             waitUntilAcquisitionStopped(deviceId);
+            enqueueCaptureSuccessBeep(deviceId);
             FingerSegmentation segmentation = lastPreviewSegmentation.get();
             CapturedData saved = saveAsImage(captured, "capture");
             if (segmentation.segments().isEmpty()) {
@@ -1167,11 +1167,25 @@ public class FingerprintCaptureService {
         }
         String pattern = blankToDefault(properties.getCaptureSuccessBeepPattern(), "3");
         String volume = blankToDefault(properties.getCaptureSuccessBeepVolume(), "100");
-        enqueueBeep(deviceId, pattern, volume, "capture success");
+        enqueueBeep(deviceId, pattern, volume, "capture success", properties.getCaptureSuccessBeepDelayMillis());
     }
 
     private void enqueueBeep(String deviceId, String pattern, String volume, String reason) {
-        deviceOutputExecutor.execute(() -> sendBeep(deviceId, pattern, volume, reason));
+        enqueueBeep(deviceId, pattern, volume, reason, 0);
+    }
+
+    private void enqueueBeep(String deviceId, String pattern, String volume, String reason, long delayMillis) {
+        deviceOutputExecutor.execute(() -> {
+            if (delayMillis > 0) {
+                try {
+                    Thread.sleep(delayMillis);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+            }
+            sendBeep(deviceId, pattern, volume, reason);
+        });
     }
 
     private void sendBeep(String deviceId, String pattern, String volume, String reason) {

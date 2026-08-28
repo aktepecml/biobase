@@ -112,6 +112,7 @@ fingerprint.console-close-when-done=false
 fingerprint.capture-success-beep-enabled=true
 fingerprint.capture-success-beep-pattern=3
 fingerprint.capture-success-beep-volume=100
+fingerprint.capture-success-beep-delay-millis=200
 fingerprint.capture-progress-beep-enabled=true
 fingerprint.capture-progress-beep-pattern=2
 fingerprint.capture-progress-beep-volume=100
@@ -138,6 +139,6 @@ Capture sirasinda SDK'nin `BIOB_OBJECT_COUNT` ve `BIOB_OBJECT_QUALITY` callbackl
 
 Segment bbox akisi oncelik sirasiyla calisir: preview callback icindeki `BioBScene/BioBROI`, FIR icindeki ayri view/segment imagelarinin ana capture image uzerinde eslestirilmesi, son olarak sadece capture image uzerinden yapilan basit goruntu fallback'i. FIR icindeki en buyuk view ana capture image olarak kaydedilir.
 
-Final image `BIOB_DATA_AVAILABLE` ile geldikten hemen sonra `BioB_SetOutputData` ile cihaz beeper'i tetiklenir. Bunu kapatmak icin `fingerprint.capture-success-beep-enabled=false` verilebilir; pattern ve volume propertylerden degistirilebilir. Roll capture'da `BIOB_ACQUISITION_STARTED` event'i geldiğinde, callback thread'i disindan, ayrica progress beep gonderilir; bunu `fingerprint.capture-progress-beep-enabled=false` ile kapatabilirsin. Cihaz `DEVICE_BEEPER_TYPE=BEEPER_NONE` donerse beep atlanir ve warn log basilir.
+Final image geldikten ve cihaz acquisition state'i durduktan sonra `BioB_SetOutputData` ile cihaz beeper'i tetiklenir. Bunu kapatmak icin `fingerprint.capture-success-beep-enabled=false` verilebilir; pattern, volume ve kisa bekleme suresi propertylerden degistirilebilir. Roll capture'da `BIOB_ACQUISITION_STARTED` event'i geldiğinde, callback thread'i disindan, ayrica progress beep gonderilir; bunu `fingerprint.capture-progress-beep-enabled=false` ile kapatabilirsin. Cihaz `DEVICE_BEEPER_TYPE=BEEPER_NONE` donerse beep atlanir ve warn log basilir.
 
 `fingerprint.capture-timeout-seconds=0` final capture gelene kadar bekler. Pozitif bir deger verirsen sure dolunca acquisition iptal edilir. `fingerprint.preview-image-format` varsayilan olarak bostur; cihazin `PREVIEW_IMAGE_FORMAT` property set etmeyi desteklediginden eminsen `BMP` veya `JPG` olarak acabilirsin.

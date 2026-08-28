@@ -23,6 +23,7 @@ public class FingerprintProperties {
     private long previewTimeoutSeconds = 5;
     private boolean previewPayloadCacheEnabled = true;
     private long previewPayloadCacheIntervalMillis = 0;
+    private boolean previewSegmentationEnabled = true;
     private boolean previewDiagnosticsEnabled = true;
     private long previewDiagnosticsIntervalMillis = 5000;
     private boolean consoleRunnerEnabled = true;
@@ -173,6 +174,14 @@ public class FingerprintProperties {
 
     public void setPreviewPayloadCacheIntervalMillis(long previewPayloadCacheIntervalMillis) {
         this.previewPayloadCacheIntervalMillis = previewPayloadCacheIntervalMillis;
+    }
+
+    public boolean isPreviewSegmentationEnabled() {
+        return previewSegmentationEnabled;
+    }
+
+    public void setPreviewSegmentationEnabled(boolean previewSegmentationEnabled) {
+        this.previewSegmentationEnabled = previewSegmentationEnabled;
     }
 
     public boolean isPreviewDiagnosticsEnabled() {

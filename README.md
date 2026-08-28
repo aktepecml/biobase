@@ -104,6 +104,7 @@ fingerprint.preview-level=Medium
 fingerprint.preview-timeout-seconds=5
 fingerprint.preview-payload-cache-enabled=true
 fingerprint.preview-payload-cache-interval-millis=0
+fingerprint.preview-segmentation-enabled=false
 fingerprint.preview-diagnostics-enabled=true
 fingerprint.preview-diagnostics-interval-millis=5000
 fingerprint.console-runner-enabled=true
@@ -126,7 +127,7 @@ fingerprint.auto-capture-override-mode=OnInsufficientCount
 fingerprint.auto-capture-override-time=4000
 ```
 
-Live preview callback thread'i icinde dosyaya yazilmaz ve BioBase API cagrisi yapilmaz. Callback native preview header'ini okur; `fingerprint.preview-payload-cache-enabled=true` ise payload'i Java byte dizisine kopyalayip son preview state'ini gunceller. `fingerprint.preview-payload-cache-interval-millis=0` her frame'i cacheler; `50` gibi bir deger Java tarafina saniyede yaklasik 20 frame tasir. Bu, BioBase dokumanindaki callback thread'i icinden LSE/BioBase API cagrisi yapmama uyarisina uygun kalmak ve preview akisini yavaslatmamak icindir. Preview'i dosyaya almak gerekirse `/api/fingerprint/preview/save` manuel olarak cagrilabilir.
+Live preview callback thread'i icinde dosyaya yazilmaz ve BioBase API cagrisi yapilmaz. Callback native preview header'ini okur; `fingerprint.preview-payload-cache-enabled=true` ise payload'i Java byte dizisine kopyalayip son preview state'ini gunceller. `fingerprint.preview-payload-cache-interval-millis=0` her frame'i cacheler; `50` gibi bir deger Java tarafina saniyede yaklasik 20 frame tasir. `fingerprint.preview-segmentation-enabled=false` preview callback icinde segment parse etmeyi kapatir; final capture sonrasindaki segment fallback'leri calismaya devam eder. Bu, BioBase dokumanindaki callback thread'i icinden LSE/BioBase API cagrisi yapmama uyarisina uygun kalmak ve preview akisini yavaslatmamak icindir. Preview'i dosyaya almak gerekirse `/api/fingerprint/preview/save` manuel olarak cagrilabilir.
 
 `fingerprint.preview-diagnostics-enabled=true` iken capture basinda cihaz preview property'leri loglanir, capture sirasinda da belirli araliklarla preview FPS, cachelenen frame sayisi ve ortalama byte-copy suresi yazilir. Donma analizi icin once bu loglara bakmak gerekir. SDK ornek uygulamasindaki en hizli yol `BioB_SetVisualizationWindow()` ile native preview'i dogrudan Win32 pencereye cizdirmektir; Spring console uygulamasinda pencere handle'i olmadigi icin bu yol ancak dis arayuz uygulamasi bir HWND saglarsa kullanilabilir.
 

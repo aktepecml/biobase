@@ -104,7 +104,7 @@ public class FingerprintCaptureService {
                     CapturedData preview = client.readData(deviceId, 0, nativeData, 0);
                     long copyNanos = System.nanoTime() - copyStartedAtNanos;
                     if (preview.bytes().length > 0) {
-                        if (preview.format() == BIOB_FIR) {
+                        if (!properties.isPreviewSegmentationEnabled() || preview.format() == BIOB_FIR) {
                             lastPreviewSegmentation.set(FingerSegmentation.empty());
                         } else {
                             lastPreviewSegmentation.set(readPreviewSegmentation(nativeData));

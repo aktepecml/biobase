@@ -224,9 +224,10 @@ public class FingerprintCaptureService {
             String effectiveImpression = blankToDefault(impression, properties.getDefaultImpression());
             activeImpression.set(effectiveImpression);
             configureCaptureProperties(deviceId, effectiveImpression);
+            String effectivePosition = blankToDefault(position, properties.getDefaultPosition());
             client.beginAcquisition(
                     deviceId,
-                    blankToDefault(position, properties.getDefaultPosition()),
+                    effectivePosition,
                     effectiveImpression
             );
             long timeout = timeoutSeconds == null ? properties.getCaptureTimeoutSeconds() : timeoutSeconds;
@@ -242,8 +243,9 @@ public class FingerprintCaptureService {
                 segmentation = detectSegmentsFromCaptureImage(saved, captured.detectedObjects());
             }
             Path annotatedPath = saveAnnotatedCapture(saved, segmentation);
+            Path croppedPath = saveCroppedCapture(saved, effectivePosition);
             lastCapture.set(saved);
-            return toResponse(saved, segmentation, annotatedPath);
+            return toResponse(saved, segmentation, annotatedPath, croppedPath);
         } catch (TimeoutException e) {
             client.cancelAcquisition(deviceId);
             throw new BioBaseException("Capture timed out before final fingerprint data arrived.");
@@ -1146,6 +1148,93 @@ public class FingerprintCaptureService {
         }
     }
 
+    private Path saveCroppedCapture(CapturedData data, String position) {
+        if (!properties.isCaptureContentCropEnabled() || !isPalmPosition(position) || data.savedPath() == null) {
+            return null;
+        }
+
+        try {
+            BufferedImage source = ImageIO.read(data.savedPath().toFile());
+            if (source == null) {
+                log.warn("Could not crop capture image: unsupported image format at {}", data.savedPath());
+                return null;
+            }
+
+            Rectangle bounds = contentBoundsByProjection(source);
+            if (bounds == null) {
+                log.warn("Could not crop capture image: no biometric content detected in {}", data.savedPath());
+                return null;
+            }
+            if (bounds.width >= source.getWidth() * 0.98 && bounds.height >= source.getHeight() * 0.98) {
+                log.info("Capture crop skipped because detected content already covers full image: {}x{}",
+                        bounds.width, bounds.height);
+                return null;
+            }
+
+            BufferedImage cropped = source.getSubimage(bounds.x, bounds.y, bounds.width, bounds.height);
+            Path path = croppedPath(data.savedPath());
+            ImageIO.write(cropped, "png", path.toFile());
+            log.info("Saved cropped capture image to {} with bbox x={}, y={}, width={}, height={}",
+                    path, bounds.x, bounds.y, bounds.width, bounds.height);
+            return path;
+        } catch (Exception e) {
+            log.warn("Could not crop capture image: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    private Rectangle contentBoundsByProjection(BufferedImage image) {
+        int width = image.getWidth();
+        int height = image.getHeight();
+        int threshold = otsuThreshold(image);
+        int[] columnCounts = new int[width];
+        int[] rowCounts = new int[height];
+
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                if (luminance(image.getRGB(x, y)) <= threshold) {
+                    columnCounts[x]++;
+                    rowCounts[y]++;
+                }
+            }
+        }
+
+        int minColumnDarkPixels = Math.max(4, height / 250);
+        int minRowDarkPixels = Math.max(4, width / 250);
+        int minX = firstActiveIndex(columnCounts, minColumnDarkPixels);
+        int maxX = lastActiveIndex(columnCounts, minColumnDarkPixels);
+        int minY = firstActiveIndex(rowCounts, minRowDarkPixels);
+        int maxY = lastActiveIndex(rowCounts, minRowDarkPixels);
+        if (minX < 0 || maxX < minX || minY < 0 || maxY < minY) {
+            return null;
+        }
+
+        int padding = Math.max(0, properties.getCaptureContentCropPaddingPixels());
+        minX = Math.max(0, minX - padding);
+        minY = Math.max(0, minY - padding);
+        maxX = Math.min(width - 1, maxX + padding);
+        maxY = Math.min(height - 1, maxY + padding);
+        return new Rectangle(minX, minY, maxX - minX + 1, maxY - minY + 1);
+    }
+
+    private static int firstActiveIndex(int[] counts, int threshold) {
+        for (int index = 0; index < counts.length; index++) {
+            if (counts[index] >= threshold) {
+                return index;
+            }
+        }
+        return -1;
+    }
+
+    private static int lastActiveIndex(int[] counts, int threshold) {
+        for (int index = counts.length - 1; index >= 0; index--) {
+            if (counts[index] >= threshold) {
+                return index;
+            }
+        }
+        return -1;
+    }
+
     private void enqueueCaptureProgressBeep(String deviceId) {
         if (!properties.isCaptureProgressBeepEnabled() || !isRollImpression(activeImpression.get())) {
             return;
@@ -1241,6 +1330,10 @@ public class FingerprintCaptureService {
         return impression != null && impression.toLowerCase(java.util.Locale.ROOT).contains("roll");
     }
 
+    private static boolean isPalmPosition(String position) {
+        return position != null && position.toLowerCase(java.util.Locale.ROOT).contains("palm");
+    }
+
     private String resolveDeviceId(String requestedDeviceId) {
         if (requestedDeviceId != null && !requestedDeviceId.isBlank()) {
             return requestedDeviceId;
@@ -1264,17 +1357,22 @@ public class FingerprintCaptureService {
     }
 
     private static CaptureResponse toResponse(CapturedData data) {
-        return toResponse(data, FingerSegmentation.empty(), null, null, List.of());
+        return toResponse(data, FingerSegmentation.empty(), null, null, null, List.of());
     }
 
     private CaptureResponse toResponse(CapturedData data, FingerSegmentation segmentation, Path annotatedPath) {
-        return toResponse(data, segmentation, annotatedPath, lastObjectCountState.get(), lastObjectQualityStates.get());
+        return toResponse(data, segmentation, annotatedPath, null);
+    }
+
+    private CaptureResponse toResponse(CapturedData data, FingerSegmentation segmentation, Path annotatedPath, Path croppedPath) {
+        return toResponse(data, segmentation, annotatedPath, croppedPath, lastObjectCountState.get(), lastObjectQualityStates.get());
     }
 
     private static CaptureResponse toResponse(
             CapturedData data,
             FingerSegmentation segmentation,
             Path annotatedPath,
+            Path croppedPath,
             Integer objectCountState,
             List<Integer> objectQualityStates
     ) {
@@ -1286,6 +1384,7 @@ public class FingerprintCaptureService {
                 data.detectedObjects(),
                 data.savedPath() == null ? null : data.savedPath().toString(),
                 annotatedPath == null ? null : annotatedPath.toString(),
+                croppedPath == null ? null : croppedPath.toString(),
                 segmentation.imageWidth(),
                 segmentation.imageHeight(),
                 segmentation.segments().stream()
@@ -1347,6 +1446,13 @@ public class FingerprintCaptureService {
         int extensionStart = fileName.lastIndexOf('.');
         String baseName = extensionStart < 0 ? fileName : fileName.substring(0, extensionStart);
         return capturePath.resolveSibling(baseName + "-annotated.png").toAbsolutePath();
+    }
+
+    private static Path croppedPath(Path capturePath) {
+        String fileName = capturePath.getFileName().toString();
+        int extensionStart = fileName.lastIndexOf('.');
+        String baseName = extensionStart < 0 ? fileName : fileName.substring(0, extensionStart);
+        return capturePath.resolveSibling(baseName + "-cropped.png").toAbsolutePath();
     }
 
     private static int clamp(int value, int min, int max) {

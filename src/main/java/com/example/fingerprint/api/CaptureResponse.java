@@ -11,6 +11,7 @@ public record CaptureResponse(
         int detectedObjects,
         String savedPath,
         String annotatedPath,
+        String croppedPath,
         int segmentImageWidth,
         int segmentImageHeight,
         List<SegmentResponse> segments,

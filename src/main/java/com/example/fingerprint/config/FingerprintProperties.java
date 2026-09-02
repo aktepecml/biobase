@@ -15,6 +15,8 @@ public class FingerprintProperties {
     private String imageResolution = "500";
     private String activeArea = "0 0 0 0";
     private boolean spoofDetectionEnabled = false;
+    private boolean captureContentCropEnabled = true;
+    private int captureContentCropPaddingPixels = 20;
     private boolean autoCaptureOverrideEnabled = true;
     private String autoCaptureOverrideTime = "4000";
     private String autoCaptureOverrideMode = "OnInsufficientCount";
@@ -115,6 +117,22 @@ public class FingerprintProperties {
 
     public void setSpoofDetectionEnabled(boolean spoofDetectionEnabled) {
         this.spoofDetectionEnabled = spoofDetectionEnabled;
+    }
+
+    public boolean isCaptureContentCropEnabled() {
+        return captureContentCropEnabled;
+    }
+
+    public void setCaptureContentCropEnabled(boolean captureContentCropEnabled) {
+        this.captureContentCropEnabled = captureContentCropEnabled;
+    }
+
+    public int getCaptureContentCropPaddingPixels() {
+        return captureContentCropPaddingPixels;
+    }
+
+    public void setCaptureContentCropPaddingPixels(int captureContentCropPaddingPixels) {
+        this.captureContentCropPaddingPixels = captureContentCropPaddingPixels;
     }
 
     public boolean isAutoCaptureOverrideEnabled() {

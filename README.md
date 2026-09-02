@@ -95,6 +95,8 @@ fingerprint.auto-contrast-enabled=true
 fingerprint.image-resolution=500
 fingerprint.active-area=0 0 0 0
 fingerprint.spoof-detection-enabled=false
+fingerprint.capture-content-crop-enabled=true
+fingerprint.capture-content-crop-padding-pixels=20
 fingerprint.auto-capture-override-enabled=true
 fingerprint.auto-capture-override-time=4000
 fingerprint.auto-capture-override-mode=OnInsufficientCount
@@ -132,6 +134,15 @@ fingerprint.auto-capture-override-mode=OnInsufficientCount
 fingerprint.auto-capture-override-time=4000
 ```
 
+Sag alt avuc capture icin tipik ayar:
+
+```properties
+fingerprint.default-position=RightLowerPalm
+fingerprint.default-impression=FingerprintFlat
+fingerprint.auto-capture-required-objects=1
+fingerprint.capture-content-crop-enabled=true
+```
+
 Live preview callback thread'i icinde dosyaya yazilmaz ve BioBase API cagrisi yapilmaz. Callback native preview header'ini okur; `fingerprint.preview-payload-cache-enabled=true` ise payload'i Java byte dizisine kopyalayip son preview state'ini gunceller. `fingerprint.preview-payload-cache-interval-millis=0` her frame'i cacheler; `50` gibi bir deger Java tarafina saniyede yaklasik 20 frame tasir. `fingerprint.preview-segmentation-enabled=false` preview callback icinde segment parse etmeyi kapatir; final capture sonrasindaki segment fallback'leri calismaya devam eder. Bu, BioBase dokumanindaki callback thread'i icinden LSE/BioBase API cagrisi yapmama uyarisina uygun kalmak ve preview akisini yavaslatmamak icindir. Preview'i dosyaya almak gerekirse `/api/fingerprint/preview/save` manuel olarak cagrilabilir.
 
 `fingerprint.preview-diagnostics-enabled=true` iken capture basinda cihaz preview property'leri loglanir, capture sirasinda da belirli araliklarla preview FPS, cachelenen frame sayisi ve ortalama byte-copy suresi yazilir. Donma analizi icin once bu loglara bakmak gerekir. SDK ornek uygulamasindaki en hizli yol `BioB_SetVisualizationWindow()` ile native preview'i dogrudan Win32 pencereye cizdirmektir; Spring console uygulamasinda pencere handle'i olmadigi icin bu yol ancak dis arayuz uygulamasi bir HWND saglarsa kullanilabilir.
@@ -139,6 +150,8 @@ Live preview callback thread'i icinde dosyaya yazilmaz ve BioBase API cagrisi ya
 Capture sirasinda SDK'nin `BIOB_OBJECT_COUNT` ve `BIOB_OBJECT_QUALITY` callbackleri de dinlenir. Callback thread'i icinde yalnizca native degerler Java listesine kopyalanir; SDK/BioBase API cagrisi yapilmaz. Son canli state `/api/fingerprint/devices/{deviceId}/status` ve capture response icindeki `objectCount` / `objectQualities` alanlarinda gorulebilir.
 
 Segment bbox akisi oncelik sirasiyla calisir: preview callback icindeki `BioBScene/BioBROI`, FIR icindeki ayri view/segment imagelarinin ana capture image uzerinde eslestirilmesi, son olarak sadece capture image uzerinden yapilan basit goruntu fallback'i. FIR icindeki en buyuk view ana capture image olarak kaydedilir.
+
+Avuc ici capture'da `position` degeri `Palm` iceriyorsa result image uzerindeki aktif iz alani tespit edilip beyaz kenarlar kirpilmis ek bir `*-cropped.png` dosyasi kaydedilir. Response icindeki `croppedPath` bu dosyayi gosterir. Kapatmak icin `fingerprint.capture-content-crop-enabled=false`, kenar payini degistirmek icin `fingerprint.capture-content-crop-padding-pixels` kullanilabilir.
 
 Final image geldikten ve cihaz acquisition state'i durduktan sonra `BioB_SetOutputData` ile cihaz beeper'i tetiklenir. Bunu kapatmak icin `fingerprint.capture-success-beep-enabled=false` verilebilir; pattern, volume, kisa bekleme suresi ve retry sayisi propertylerden degistirilebilir. Roll capture'da `BIOB_ACQUISITION_STARTED` event'i geldiğinde, callback thread'i disindan, ayrica progress beep gonderilir; bunu `fingerprint.capture-progress-beep-enabled=false` ile kapatabilirsin. Cihaz `DEVICE_BEEPER_TYPE=BEEPER_NONE` donerse beep atlanir ve warn log basilir.
 

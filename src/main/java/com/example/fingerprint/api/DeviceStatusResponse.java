@@ -10,6 +10,7 @@ public record DeviceStatusResponse(
         boolean previewAvailable,
         boolean captureAvailable,
         CaptureResponse.ObjectCountResponse objectCount,
-        List<CaptureResponse.ObjectQualityResponse> objectQualities
+        List<CaptureResponse.ObjectQualityResponse> objectQualities,
+        List<String> guidanceMessages
 ) {
 }

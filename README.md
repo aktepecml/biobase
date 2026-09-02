@@ -149,6 +149,8 @@ Live preview callback thread'i icinde dosyaya yazilmaz ve BioBase API cagrisi ya
 
 Capture sirasinda SDK'nin `BIOB_OBJECT_COUNT` ve `BIOB_OBJECT_QUALITY` callbackleri de dinlenir. Callback thread'i icinde yalnizca native degerler Java listesine kopyalanir; SDK/BioBase API cagrisi yapilmaz. Son canli state `/api/fingerprint/devices/{deviceId}/status` ve capture response icindeki `objectCount` / `objectQualities` alanlarinda gorulebilir.
 
+`BIOB_OBJECT_QUALITY` icindeki position state'leri okunabilir `guidanceMessages` alanina cevrilir. Ornegin `BIOB_OBJECT_POSITION_TOO_RIGHT` geldiyse response `Iz sag taraftan tarayici alaninin disinda, sola kaydirin.` mesajini doner. Bu alan hem live status response'unda hem capture response'unda bulunur.
+
 Segment bbox akisi oncelik sirasiyla calisir: preview callback icindeki `BioBScene/BioBROI`, FIR icindeki ayri view/segment imagelarinin ana capture image uzerinde eslestirilmesi, son olarak sadece capture image uzerinden yapilan basit goruntu fallback'i. FIR icindeki en buyuk view ana capture image olarak kaydedilir.
 
 Avuc ici capture'da `position` degeri `Palm` iceriyorsa result image uzerindeki aktif iz alani tespit edilip beyaz kenarlar kirpilmis ek bir `*-cropped.png` dosyasi kaydedilir. Response icindeki `croppedPath` bu dosyayi gosterir. Kapatmak icin `fingerprint.capture-content-crop-enabled=false`, kenar payini degistirmek icin `fingerprint.capture-content-crop-padding-pixels` kullanilabilir.

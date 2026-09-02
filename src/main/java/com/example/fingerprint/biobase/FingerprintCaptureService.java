@@ -298,7 +298,8 @@ public class FingerprintCaptureService {
                 lastPreview.get() != null,
                 lastCapture.get() != null,
                 objectCountResponse(lastObjectCountState.get()),
-                objectQualityResponses(lastObjectQualityStates.get())
+                objectQualityResponses(lastObjectQualityStates.get()),
+                guidanceMessages(lastObjectQualityStates.get(), lastObjectCountState.get())
         );
     }
 
@@ -1398,6 +1399,7 @@ public class FingerprintCaptureService {
                         .toList(),
                 objectCountResponse(objectCountState),
                 objectQualityResponses(objectQualityStates),
+                guidanceMessages(objectQualityStates, objectCountState),
                 data.bytes().length,
                 data.capturedAt()
         );
@@ -1425,10 +1427,71 @@ public class FingerprintCaptureService {
             responses.add(new CaptureResponse.ObjectQualityResponse(
                     index,
                     value,
-                    BioBaseObjectQualityState.fromValue(value).name()
+                    BioBaseObjectQualityState.fromValue(value).name(),
+                    guidanceMessage(BioBaseObjectQualityState.fromValue(value))
             ));
         }
         return responses;
+    }
+
+    private static List<String> guidanceMessages(List<Integer> qualityValues, Integer countValue) {
+        ArrayList<String> messages = new ArrayList<>();
+        if (countValue != null) {
+            BioBaseObjectCountState countState = BioBaseObjectCountState.fromValue(countValue);
+            String countMessage = countGuidanceMessage(countState);
+            if (countMessage != null) {
+                messages.add(countMessage);
+            }
+        }
+        if (qualityValues != null) {
+            for (Integer value : qualityValues) {
+                if (value == null) {
+                    continue;
+                }
+                String message = guidanceMessage(BioBaseObjectQualityState.fromValue(value));
+                if (message != null && !messages.contains(message)) {
+                    messages.add(message);
+                }
+            }
+        }
+        return List.copyOf(messages);
+    }
+
+    private static String countGuidanceMessage(BioBaseObjectCountState state) {
+        return switch (state) {
+            case BIOB_TOO_MANY_OBJECTS -> "Tarayici alaninda beklenenden fazla iz var.";
+            case BIOB_TOO_FEW_OBJECTS -> "Tarayici alaninda beklenenden az iz var.";
+            default -> null;
+        };
+    }
+
+    private static String guidanceMessage(BioBaseObjectQualityState state) {
+        return switch (state) {
+            case BIOB_OBJECT_TOO_LIGHT -> "Iz kontrasti dusuk.";
+            case BIOB_OBJECT_TOO_DARK -> "Iz cok koyu.";
+            case BIOB_OBJECT_BAD_SHAPE -> "Iz sekli uygun degil.";
+            case BIOB_OBJECT_POSITION_NOT_OK -> "Iz tarayici takip alaninda degil.";
+            case BIOB_OBJECT_CORE_NOT_PRESENT -> "Iz merkezi algilanamadi.";
+            case BIOB_OBJECT_TRACKING_NOT_OK -> "Iz takibi uygun degil.";
+            case BIOB_OBJECT_POSITION_TOO_HIGH, BIOB_OBJECT_FLEX_POSITION_TOO_HIGH ->
+                    "Iz ust taraftan tarayici alaninin disinda, asagi kaydirin.";
+            case BIOB_OBJECT_POSITION_TOO_LEFT, BIOB_OBJECT_FLEX_POSITION_TOO_LEFT ->
+                    "Iz sol taraftan tarayici alaninin disinda, saga kaydirin.";
+            case BIOB_OBJECT_POSITION_TOO_RIGHT, BIOB_OBJECT_FLEX_POSITION_TOO_RIGHT ->
+                    "Iz sag taraftan tarayici alaninin disinda, sola kaydirin.";
+            case BIOB_OBJECT_POSITION_TOO_LOW, BIOB_OBJECT_FLEX_POSITION_TOO_LOW ->
+                    "Iz alt taraftan tarayici alaninin disinda, yukari kaydirin.";
+            case BIOB_OBJECT_TOO_CLOSE -> "Iz tarayiciya cok yakin.";
+            case BIOB_OBJECT_TOO_FAR -> "Iz tarayicidan cok uzak.";
+            case BIOB_OBJECT_NOT_FOCUSED -> "Iz odakta degil.";
+            case BIOB_OBJECT_NOT_STILL -> "Iz sabit degil.";
+            case BIOB_OBJECT_NOT_ALIGNED -> "Iz hizali degil.";
+            case BIOB_OBJECT_OCCLUSION -> "Izde kapanma/engel algilandi.";
+            case BIOB_OBJECT_CONFUSION -> "Iz algilama kararsiz.";
+            case BIOB_OBJECT_ROTATED_CLOCKWISE -> "Iz saat yonunde fazla donuk.";
+            case BIOB_OBJECT_ROTATED_COUNTERCLOCKWISE -> "Iz saat yonunun tersine fazla donuk.";
+            default -> null;
+        };
     }
 
     private static String toCountLog(int value) {

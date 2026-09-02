@@ -17,6 +17,7 @@ public record CaptureResponse(
         List<SegmentResponse> segments,
         ObjectCountResponse objectCount,
         List<ObjectQualityResponse> objectQualities,
+        List<String> guidanceMessages,
         int byteCount,
         Instant capturedAt
 ) {
@@ -38,7 +39,8 @@ public record CaptureResponse(
     public record ObjectQualityResponse(
             int index,
             int value,
-            String name
+            String name,
+            String message
     ) {
     }
 }

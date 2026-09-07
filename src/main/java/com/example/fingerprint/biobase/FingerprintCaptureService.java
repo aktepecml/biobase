@@ -136,8 +136,7 @@ public class FingerprintCaptureService {
             if (dataStatus >= 0 && data != null) {
                 CapturedData capture = client.readData(deviceId, dataStatus, data, detectedObjects);
                 if (capture.bytes().length > 0) {
-                    log.info("Capture data received: format={}, bytes={}, detectedObjects={}",
-                            capture.format(), capture.bytes().length, capture.detectedObjects());
+                    log.info("Capture data received: format={}, bytes={}, detectedObjects={}", capture.format(), capture.bytes().length, capture.detectedObjects());
                     lastCapture.set(capture);
                     CompletableFuture<CapturedData> future = pendingCapture.get();
                     if (future != null) {
@@ -1706,25 +1705,6 @@ public class FingerprintCaptureService {
     }
 
     private Rectangle rollContentBounds(BufferedImage image, FingerSegmentation segmentation) {
-        if (segmentation != null && !segmentation.segments().isEmpty()) {
-            double scaleX = segmentation.imageWidth() > 0
-                    ? (double) image.getWidth() / segmentation.imageWidth() : 1.0;
-            double scaleY = segmentation.imageHeight() > 0
-                    ? (double) image.getHeight() / segmentation.imageHeight() : 1.0;
-
-            int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE;
-            int maxX = -1, maxY = -1;
-            for (FingerSegment s : segmentation.segments()) {
-                minX = Math.min(minX, (int) Math.round(s.x() * scaleX));
-                minY = Math.min(minY, (int) Math.round(s.y() * scaleY));
-                maxX = Math.max(maxX, (int) Math.round((s.x() + s.width()) * scaleX));
-                maxY = Math.max(maxY, (int) Math.round((s.y() + s.height()) * scaleY));
-            }
-            if (maxX > minX && maxY > minY) {
-                return applyRollTrimPadding(new Rectangle(minX, minY, maxX - minX, maxY - minY),
-                        image.getWidth(), image.getHeight());
-            }
-        }
         int width = image.getWidth();
         int height = image.getHeight();
         int threshold = otsuThreshold(image);
@@ -1757,30 +1737,26 @@ public class FingerprintCaptureService {
                 break;
             }
         }
-        return applyRollTrimPadding(new Rectangle(minX, minY, maxX - minX + 1, maxY - minY + 1),
-                width, height);
+        return applyRollTrimPadding(new Rectangle(minX, minY, maxX - minX + 1, maxY - minY + 1), width, height);
     }
 
     private Rectangle applyRollTrimPadding(Rectangle bounds, int imageWidth, int imageHeight) {
         int padding = 40;
-        int edgeTolerance = Math.max(4, imageHeight / 100); // kenara yakınlık toleransı
 
         int minX = Math.max(0, bounds.x - padding);
         int minY = Math.max(0, bounds.y - padding);
         int maxX = Math.min(imageWidth - 1, bounds.x + bounds.width - 1 + padding);
+
         int maxY = Math.min(imageHeight - 1, bounds.y + bounds.height - 1 + padding);
 
-        // İçerik alt kenara bitişikse alt tarafı KIRPMA
-        if (bounds.y + bounds.height >= imageHeight - edgeTolerance) {
+        int bottomEdgeTolerance = Math.max(10, imageHeight / 20);
+
+        if (bounds.y + bounds.height >= imageHeight - bottomEdgeTolerance) {
             maxY = imageHeight - 1;
         }
-        // (İstersen diğer kenarlar için de simetrik kontrol ekleyebilirsin)
-        // if (bounds.y <= edgeTolerance) minY = 0;
-        // if (bounds.x + bounds.width >= imageWidth - edgeTolerance) maxX = imageWidth - 1;
-        // if (bounds.x <= edgeTolerance) minX = 0;
-
         return new Rectangle(minX, minY, maxX - minX + 1, maxY - minY + 1);
     }
+
 
     private static Path trimmedPath(Path capturePath) {
         String fileName = capturePath.getFileName().toString();

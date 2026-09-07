@@ -244,6 +244,7 @@ public class FingerprintCaptureService {
             }
             Path annotatedPath = saveAnnotatedCapture(saved, segmentation);
             Path croppedPath = saveCroppedCapture(saved, effectivePosition);
+            Path trimmedPath = saveTrimmedRollCapture(saved, segmentation);
             lastCapture.set(saved);
             return toResponse(saved, segmentation, annotatedPath, croppedPath);
         } catch (TimeoutException e) {
@@ -1635,5 +1636,136 @@ public class FingerprintCaptureService {
         int averageDifference() {
             return totalDifference;
         }
+    }
+
+    private Path saveTrimmedRollCapture(CapturedData data, FingerSegmentation segmentation) {
+        if (data.savedPath() == null) {
+            return null;
+        }
+
+        try {
+            BufferedImage source = ImageIO.read(data.savedPath().toFile());
+            if (source == null) {
+                log.warn("Could not trim roll capture: unsupported image format at {}", data.savedPath());
+                return null;
+            }
+
+            Rectangle bounds = rollContentBounds(source, segmentation);
+            if (bounds == null) {
+                log.warn("Could not trim roll capture: no fingerprint content detected in {}", data.savedPath());
+                return null;
+            }
+
+            if (bounds.width >= source.getWidth() * 0.98 && bounds.height >= source.getHeight() * 0.98) {
+                log.info("Roll trim skipped: content already covers full image ({}x{})",
+                        bounds.width, bounds.height);
+                return null;
+            }
+
+            BufferedImage trimmed = source.getSubimage(bounds.x, bounds.y, bounds.width, bounds.height);
+            Path path = trimmedPath(data.savedPath());
+            ImageIO.write(trimmed, "png", path.toFile());
+            log.info("Saved trimmed roll capture to {} with bbox x={}, y={}, width={}, height={}",
+                    path, bounds.x, bounds.y, bounds.width, bounds.height);
+            return path;
+        } catch (Exception e) {
+            log.warn("Could not trim roll capture: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    private boolean[][] buildFingerMask(BufferedImage image, int threshold) {
+        int width = image.getWidth();
+        int height = image.getHeight();
+        boolean bgDark = backgroundIsDark(image, threshold);
+        boolean[][] mask = new boolean[width][height];
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                boolean dark = luminance(image.getRGB(x, y)) <= threshold;
+                mask[x][y] = bgDark ? !dark : dark;
+            }
+        }
+        return mask;
+    }
+
+    private static boolean backgroundIsDark(BufferedImage image, int threshold) {
+        int width = image.getWidth();
+        int height = image.getHeight();
+        long dark = 0, total = 0;
+        for (int x = 0; x < width; x++) {
+            total += 2;
+            if (luminance(image.getRGB(x, 0)) <= threshold) dark++;
+            if (luminance(image.getRGB(x, height - 1)) <= threshold) dark++;
+        }
+        for (int y = 0; y < height; y++) {
+            total += 2;
+            if (luminance(image.getRGB(0, y)) <= threshold) dark++;
+            if (luminance(image.getRGB(width - 1, y)) <= threshold) dark++;
+        }
+        return dark * 2 > total;
+    }
+
+    private Rectangle rollContentBounds(BufferedImage image, FingerSegmentation segmentation) {
+        if (segmentation != null && !segmentation.segments().isEmpty()) {
+            double scaleX = segmentation.imageWidth() > 0
+                    ? (double) image.getWidth() / segmentation.imageWidth() : 1.0;
+            double scaleY = segmentation.imageHeight() > 0
+                    ? (double) image.getHeight() / segmentation.imageHeight() : 1.0;
+
+            int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE;
+            int maxX = -1, maxY = -1;
+            for (FingerSegment s : segmentation.segments()) {
+                minX = Math.min(minX, (int) Math.round(s.x() * scaleX));
+                minY = Math.min(minY, (int) Math.round(s.y() * scaleY));
+                maxX = Math.max(maxX, (int) Math.round((s.x() + s.width()) * scaleX));
+                maxY = Math.max(maxY, (int) Math.round((s.y() + s.height()) * scaleY));
+            }
+            if (maxX > minX && maxY > minY) {
+                return applyRollTrimPadding(new Rectangle(minX, minY, maxX - minX, maxY - minY),
+                        image.getWidth(), image.getHeight());
+            }
+        }
+        int width = image.getWidth();
+        int height = image.getHeight();
+        int threshold = otsuThreshold(image);
+        boolean[][] mask = buildFingerMask(image, threshold);
+
+        int[] columnCounts = new int[width];
+        int[] rowCounts = new int[height];
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                if (mask[x][y]) {
+                    columnCounts[x]++;
+                    rowCounts[y]++;
+                }
+            }
+        }
+        int minColumnActive = Math.max(6, height / 150);
+        int minRowActive = Math.max(6, width / 150);
+        int minX = firstActiveIndex(columnCounts, minColumnActive);
+        int maxX = lastActiveIndex(columnCounts, minColumnActive);
+        int minY = firstActiveIndex(rowCounts, minRowActive);
+        int maxY = lastActiveIndex(rowCounts, minRowActive);
+        if (minX < 0 || maxX < minX || minY < 0 || maxY < minY) {
+            return null;
+        }
+        return applyRollTrimPadding(new Rectangle(minX, minY, maxX - minX + 1, maxY - minY + 1),
+                width, height);
+    }
+
+    private Rectangle applyRollTrimPadding(Rectangle bounds, int imageWidth, int imageHeight) {
+        int padding = 40;
+        int minX = Math.max(0, bounds.x - padding);
+        int minY = Math.max(0, bounds.y - padding);
+        int maxX = Math.min(imageWidth - 1, bounds.x + bounds.width - 1 + padding);
+        int maxY = Math.min(imageHeight - 1, bounds.y + bounds.height - 1 + padding);
+        return new Rectangle(minX, minY, maxX - minX + 1, maxY - minY + 1);
+    }
+
+    private static Path trimmedPath(Path capturePath) {
+        String fileName = capturePath.getFileName().toString();
+        int extensionStart = fileName.lastIndexOf('.');
+        String baseName = extensionStart < 0 ? fileName : fileName.substring(0, extensionStart);
+        return capturePath.resolveSibling(baseName + "-trimmed.png").toAbsolutePath();
     }
 }

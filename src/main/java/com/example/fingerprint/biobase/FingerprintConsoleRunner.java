@@ -44,25 +44,53 @@ public class FingerprintConsoleRunner implements ApplicationRunner {
             log.info("Opening first BioBase device: {} / {}", device.modelName(), deviceId);
             service.openDevice(deviceId, false);
 
-            log.info("Starting capture. Preview will be kept in memory, final capture will be saved when available.");
-            CaptureResponse capture = service.capture(
-                    deviceId,
-                    properties.getDefaultPosition(),
-                    properties.getDefaultImpression(),
-                    properties.getCaptureTimeoutSeconds()
-            );
-            log.info("Capture saved to {}", capture.savedPath());
+            log.info("Starting continuous capture loop. Press Ctrl+C to stop application.");
+
+            // Sonsuz döngü başlangıcı
+            while (true) {
+                try {
+                    log.info("Waiting for fingerprint capture...");
+
+                    CaptureResponse capture = service.capture(
+                            deviceId,
+                            properties.getDefaultPosition(),
+                            properties.getDefaultImpression(),
+                            properties.getCaptureTimeoutSeconds()
+                    );
+
+                    log.info("Capture completed successfully.");
+
+                    // İsteğe bağlı: Her başarılı taramadan sonra kısa bir bekleme (örn: 1 saniye)
+                    Thread.sleep(1000);
+
+                } catch (InterruptedException e) {
+                    log.info("Capture loop interrupted, exiting...");
+                    Thread.currentThread().interrupt();
+                    break;
+                } catch (Exception e) {
+                    // Döngü içindeki hatalar (örneğin timeout) döngüyü kırmasın, bir sonraki taramaya geçsin
+                    log.error("Error during capture step. Retrying in 2 seconds...", e);
+                    Thread.sleep(2000);
+                }
+            }
+
         } catch (Exception e) {
-            log.error("Console runner failed: {}", e.getMessage(), e);
+            log.error("Critical error in fingerprint system initialization", e);
         } finally {
-            if (properties.isConsoleCloseWhenDone() && deviceId != null) {
+            // Uygulama kapanırken kaynakları güvenli bir şekilde temizle
+            if (deviceId != null) {
                 try {
                     service.closeDevice(deviceId, true);
-                    service.closeSystem();
-                    log.info("BioBase system closed.");
+                    log.info("Device closed safely.");
                 } catch (Exception e) {
-                    log.warn("Could not close BioBase system cleanly: {}", e.getMessage());
+                    log.error("Failed to close device: {}", deviceId, e);
                 }
+            }
+            try {
+                service.closeSystem();
+                log.info("BioBase system closed.");
+            } catch (Exception e) {
+                log.error("Failed to close BioBase system", e);
             }
         }
     }

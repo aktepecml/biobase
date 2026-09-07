@@ -1749,16 +1749,36 @@ public class FingerprintCaptureService {
         if (minX < 0 || maxX < minX || minY < 0 || maxY < minY) {
             return null;
         }
+        // Alt kenara yakın satırlarda içerik varsa kırpma sınırını görüntü sonuna çek
+        int bottomScanStart = Math.max(0, height - Math.max(10, height / 50));
+        for (int y = bottomScanStart; y < height; y++) {
+            if (rowCounts[y] >= minRowActive / 2) { // daha toleranslı eşik
+                maxY = height - 1;
+                break;
+            }
+        }
         return applyRollTrimPadding(new Rectangle(minX, minY, maxX - minX + 1, maxY - minY + 1),
                 width, height);
     }
 
     private Rectangle applyRollTrimPadding(Rectangle bounds, int imageWidth, int imageHeight) {
         int padding = 40;
+        int edgeTolerance = Math.max(4, imageHeight / 100); // kenara yakınlık toleransı
+
         int minX = Math.max(0, bounds.x - padding);
         int minY = Math.max(0, bounds.y - padding);
         int maxX = Math.min(imageWidth - 1, bounds.x + bounds.width - 1 + padding);
         int maxY = Math.min(imageHeight - 1, bounds.y + bounds.height - 1 + padding);
+
+        // İçerik alt kenara bitişikse alt tarafı KIRPMA
+        if (bounds.y + bounds.height >= imageHeight - edgeTolerance) {
+            maxY = imageHeight - 1;
+        }
+        // (İstersen diğer kenarlar için de simetrik kontrol ekleyebilirsin)
+        // if (bounds.y <= edgeTolerance) minY = 0;
+        // if (bounds.x + bounds.width >= imageWidth - edgeTolerance) maxX = imageWidth - 1;
+        // if (bounds.x <= edgeTolerance) minX = 0;
+
         return new Rectangle(minX, minY, maxX - minX + 1, maxY - minY + 1);
     }
 

@@ -718,16 +718,59 @@ public class FingerprintCaptureService {
         List<int[]> ranges = columnRanges(activeColumns, Math.max(3, width / 120), Math.max(12, width / 80));
         java.util.ArrayList<FingerSegment> candidates = new java.util.ArrayList<>();
         for (int[] range : ranges) {
-            FingerSegment segment = boundsForRange(candidates.size() + 1, darkPixels, range[0], range[1], width, height);
+            FingerSegment segment = boundsForRange(1, darkPixels, range[0], range[1], width, height);
             if (segment.width() >= Math.max(10, width / 120) && segment.height() >= Math.max(20, height / 20)) {
-                candidates.add(segment);
+                FingerSegment topBogum = cropToFirstKnuckle(segment, darkPixels);
+                candidates.add(topBogum);
             }
         }
 
         if (candidates.isEmpty()) {
             FingerSegment fullBounds = boundsForRange(1, darkPixels, 0, width - 1, width, height);
             if (fullBounds.width() > 1 && fullBounds.height() > 1) {
-                candidates.add(fullBounds);
+                candidates.add(cropToFirstKnuckle(fullBounds, darkPixels));
+            }
+        }
+
+        if (expectedCount > 0 && candidates.size() < expectedCount) {
+            while (candidates.size() < expectedCount) {
+                FingerSegment widestSegment = null;
+                int widestIndex = -1;
+
+                for (int i = 0; i < candidates.size(); i++) {
+                    FingerSegment s = candidates.get(i);
+                    if (widestSegment == null || s.width() > widestSegment.width()) {
+                        widestSegment = s;
+                        widestIndex = i;
+                    }
+                }
+
+                if (widestSegment == null || widestSegment.width() < Math.max(20, width / 60)) {
+                    break;
+                }
+
+                int bestSplitX = -1;
+                int minDarkCount = Integer.MAX_VALUE;
+                int startX = widestSegment.x() + (widestSegment.width() / 5);
+                int endX = widestSegment.x() + (widestSegment.width() * 4 / 5);
+
+                for (int x = startX; x <= endX; x++) {
+                    if (smoothed[x] < minDarkCount) {
+                        minDarkCount = smoothed[x];
+                        bestSplitX = x;
+                    }
+                }
+
+                if (bestSplitX != -1) {
+                    candidates.remove(widestIndex);
+                    FingerSegment leftSeg = boundsForRange(1, darkPixels, widestSegment.x(), bestSplitX - 1, width, height);
+                    FingerSegment rightSeg = boundsForRange(1, darkPixels, bestSplitX + 1, widestSegment.x() + widestSegment.width() - 1, width, height);
+
+                    candidates.add(cropToFirstKnuckle(leftSeg, darkPixels));
+                    candidates.add(cropToFirstKnuckle(rightSeg, darkPixels));
+                } else {
+                    break;
+                }
             }
         }
 
@@ -744,6 +787,54 @@ public class FingerprintCaptureService {
             indexed.add(new FingerSegment(index + 1, segment.x(), segment.y(), segment.width(), segment.height()));
         }
         return List.copyOf(indexed);
+    }
+
+    private FingerSegment cropToFirstKnuckle(FingerSegment segment, boolean[][] darkPixels) {
+        int startY = segment.y();
+        int endY = segment.y() + segment.height();
+        int segmentWidth = segment.width();
+
+        int[] rowCounts = new int[endY - startY];
+        for (int y = startY; y < endY; y++) {
+            int darkInRow = 0;
+            for (int x = segment.x(); x < segment.x() + segmentWidth; x++) {
+                if (darkPixels[x][y]) {
+                    darkInRow++;
+                }
+            }
+            rowCounts[y - startY] = darkInRow;
+        }
+
+        int bestCutY = endY;
+        int minRowThreshold = Math.max(2, segmentWidth / 6);
+
+        int searchStart = startY + (int)(segment.height() * 0.35);
+
+        for (int y = searchStart; y < endY; y++) {
+            int index = y - startY;
+            if (rowCounts[index] <= minRowThreshold) {
+                bestCutY = y;
+                break;
+            }
+        }
+
+        if (bestCutY == endY) {
+            int minPixels = Integer.MAX_VALUE;
+            for (int y = searchStart; y < endY - (segment.height() * 0.2); y++) {
+                int index = y - startY;
+                if (rowCounts[index] < minPixels) {
+                    minPixels = rowCounts[index];
+                    bestCutY = y;
+                }
+            }
+        }
+
+        int newHeight = bestCutY - startY;
+        if (newHeight < segment.height() * 0.3) {
+            newHeight = (int) (segment.height() * 0.5);
+        }
+
+        return new FingerSegment(segment.index(), segment.x(), startY, segmentWidth, newHeight);
     }
 
     private static int otsuThreshold(BufferedImage image) {
@@ -1287,7 +1378,7 @@ public class FingerprintCaptureService {
             return;
         }
 
-        String xml = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"true\"?>"
+        String xml = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
                 + "<BioBase Version=\"4.0\" "
                 + "xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" "
                 + "xsi:noNamespaceSchemaLocation=\"BioBase.xsd\">"

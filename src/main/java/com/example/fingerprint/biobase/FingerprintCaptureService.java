@@ -793,7 +793,14 @@ public class FingerprintCaptureService {
         int startY = segment.y();
         int endY = segment.y() + segment.height();
         int segmentWidth = segment.width();
+        int segmentHeight = segment.height();
 
+        // 0) KISA SEGMENT: sadece uç basımı — hiç kırpma
+        if (segmentHeight < segmentWidth * 1.6) {
+            return segment;
+        }
+
+        // 1) Her satırdaki koyu piksel sayısı
         int[] rowCounts = new int[endY - startY];
         for (int y = startY; y < endY; y++) {
             int darkInRow = 0;
@@ -805,35 +812,107 @@ public class FingerprintCaptureService {
             rowCounts[y - startY] = darkInRow;
         }
 
-        int bestCutY = endY;
-        int minRowThreshold = Math.max(2, segmentWidth / 6);
-
-        int searchStart = startY + (int)(segment.height() * 0.35);
-
-        for (int y = searchStart; y < endY; y++) {
-            int index = y - startY;
-            if (rowCounts[index] <= minRowThreshold) {
-                bestCutY = y;
-                break;
+        // 2) 5 satırlık hareketli ortalama
+        int[] smoothed = new int[rowCounts.length];
+        for (int i = 0; i < rowCounts.length; i++) {
+            int sum = 0, count = 0;
+            for (int d = -2; d <= 2; d++) {
+                int idx = i + d;
+                if (idx >= 0 && idx < rowCounts.length) {
+                    sum += rowCounts[idx];
+                    count++;
+                }
             }
+            smoothed[i] = sum / count;
         }
 
-        if (bestCutY == endY) {
-            int minPixels = Integer.MAX_VALUE;
-            for (int y = searchStart; y < endY - (segment.height() * 0.2); y++) {
-                int index = y - startY;
-                if (rowCounts[index] < minPixels) {
-                    minPixels = rowCounts[index];
+        // 3) Arama bölgesi: %40 - %70
+        int searchStart = startY + (int) (segmentHeight * 0.40);
+        int searchEnd = startY + (int) (segmentHeight * 0.70);
+
+        // 4) Tepe değeri
+        int peak = 0;
+        for (int i = 0; i <= (searchStart - startY); i++) {
+            if (smoothed[i] > peak) {
+                peak = smoothed[i];
+            }
+        }
+        if (peak <= 0) {
+            peak = segmentWidth;
+        }
+
+        // 5) Oransal eşik
+        int valleyThreshold = (int) (peak * 0.55);
+
+        int bestCutY = -1;
+
+        // 6) Sürdürülebilir vadi arama
+        int sustain = Math.max(3, (int) (segmentHeight * 0.05));
+        for (int y = searchStart; y < searchEnd; y++) {
+            int idx = y - startY;
+            if (smoothed[idx] <= valleyThreshold) {
+                boolean sustained = true;
+                for (int k = 1; k <= sustain && idx + k < smoothed.length; k++) {
+                    if (smoothed[idx + k] > valleyThreshold) {
+                        sustained = false;
+                        break;
+                    }
+                }
+                if (sustained) {
                     bestCutY = y;
+                    break;
                 }
             }
         }
 
-        int newHeight = bestCutY - startY;
-        if (newHeight < segment.height() * 0.3) {
-            newHeight = (int) (segment.height() * 0.5);
+        boolean valleyFound = (bestCutY != -1);
+
+        // 7) Vadi bulunamazsa: en büyük dikey düşüş
+        if (!valleyFound) {
+            int maxDrop = 0;
+            for (int y = searchStart; y < searchEnd; y++) {
+                int idx = y - startY;
+                if (idx + 1 < smoothed.length) {
+                    int drop = smoothed[idx] - smoothed[idx + 1];
+                    if (drop > maxDrop) {
+                        maxDrop = drop;
+                        bestCutY = y;
+                    }
+                }
+            }
         }
 
+        // 8) Segment uzunluğuna göre güvenlik sınırları:
+        //    - ÇOK UZUN segment (boğumlu basım): vadi tespitine güven,
+        //      kesim %45'in üstüne çıkamaz ama aşağı serbesttir.
+        //    - ORTA UZUN segment (belirsiz): sıkı sınır, en fazla %35 kırp.
+        boolean veryLong = segmentHeight > segmentWidth * 2.2;
+        int minCutY, maxCutY;
+
+        if (veryLong) {
+            minCutY = startY + (int) (segmentHeight * 0.45);
+            maxCutY = startY + (int) (segmentHeight * 0.70);
+        } else {
+            minCutY = startY + (int) (segmentHeight * 0.65);
+            maxCutY = startY + (int) (segmentHeight * 0.70);
+        }
+
+        if (bestCutY == -1) {
+            bestCutY = startY + (int) (segmentHeight * 0.55);
+        }
+        if (bestCutY < minCutY) {
+            bestCutY = minCutY;
+        }
+        if (bestCutY > maxCutY) {
+            bestCutY = maxCutY;
+        }
+
+        // 9) ORTA UZUN segmentlerde vadi bulunamadıysa kesim yapma (koru)
+        if (!veryLong && !valleyFound) {
+            return segment;
+        }
+
+        int newHeight = bestCutY - startY;
         return new FingerSegment(segment.index(), segment.x(), startY, segmentWidth, newHeight);
     }
 

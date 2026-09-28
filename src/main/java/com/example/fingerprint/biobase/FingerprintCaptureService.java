@@ -66,7 +66,11 @@ public class FingerprintCaptureService {
     private static final String PROP_PREVIEW_LEVEL = "PREVIEW_LEVEL";
     private static final String PROP_AVAILABLE_PREVIEW_LEVELS = "AVAILABLE_PREVIEW_LEVELS";
     private static final String PROP_DEVICE_PREVIEW_FRAME_RATE = "DEVICE_FRAME_RATE";
+    private static final String PROP_DEVICE_PREVIEW_IMAGES_SUPPORTED = "DEVICE_PREVIEW_IMAGES_SUPPORTED";
     private static final String PROP_ENCODING_FORMATS_SUPPORTED = "ENCODING_FORMATS_SUPPORTED";
+    private static final String PROP_VISUALIZATION_MODE = "VISUALIZATION_MODE";
+    private static final String PROP_VISUALIZATION_FULLIMAGE_ON = "VISUALIZATION_FULLIMAGE_ON";
+    private static final String PROP_AUTOCONTRAST_WAIT_TIME = "AUTOCONTRAST_WAIT_TIME";
     private static final String PROP_DEVICE_BEEPER_TYPE = "DEVICE_BEEPER_TYPE";
     private static final String PROP_BEEPER_NONE = "BEEPER_NONE";
     private static final String PROP_DEVICE_LED_TYPE = "DEVICE_LED_TYPE";
@@ -115,7 +119,13 @@ public class FingerprintCaptureService {
                 BioBaseDataFormat format = BioBaseDataFormat.fromValue(nativeData.formatType);
                 int bufferSize = Math.max(nativeData.bufferSize, 0);
                 if (previewSeenLogged.compareAndSet(false, true)) {
-                    log.info("First preview received: format={}, bytes={}", format, bufferSize);
+                    log.info("First preview received: format={}, bytes={}, finalImage={}, structName={}, extStruct={}, buffer={}",
+                            format,
+                            bufferSize,
+                            nativeData.finalImage,
+                            pointerString(nativeData.structName),
+                            pointerAddress(nativeData.extStruct),
+                            pointerAddress(nativeData.buffer));
                 }
                 if (shouldCachePreviewPayload()) {
                     long copyStartedAtNanos = System.nanoTime();
@@ -202,6 +212,7 @@ public class FingerprintCaptureService {
         client.registerCallback(deviceId, BioBaseEvent.BIOB_DATA_AVAILABLE, dataAvailableCallback);
         client.openDevice(deviceId, reset);
         activeDeviceId = deviceId;
+        logDeviceInfo(deviceId);
         logLedCapability(deviceId);
     }
 
@@ -1299,14 +1310,31 @@ public class FingerprintCaptureService {
     }
 
     private void configurePreview(String deviceId) {
-        logPreviewCapabilities(deviceId);
+        logPreviewCapabilities(deviceId, "before");
         setOptionalProperty(deviceId, PROP_PREVIEW_IMAGE_FORMAT, properties.getPreviewImageFormat());
         setOptionalProperty(deviceId, PROP_PREVIEW_LEVEL, properties.getPreviewLevel());
+        logPreviewCapabilities(deviceId, "after");
     }
 
     private void logBeeperCapability(String deviceId) {
         getOptionalProperty(deviceId, PROP_DEVICE_BEEPER_TYPE)
                 .ifPresent(type -> log.info("BioBase device beeper type: {}", type));
+    }
+
+    private void logDeviceInfo(String deviceId) {
+        if (!properties.isPreviewDiagnosticsEnabled()) {
+            return;
+        }
+        devices().stream()
+                .filter(device -> Objects.equals(device.deviceId(), deviceId))
+                .findFirst()
+                .ifPresent(device -> log.info(
+                        "BioBase device info: model={}, serial={}, interface={}, modality={}, visualizers={}",
+                        device.modelName(),
+                        device.serialNumber(),
+                        device.interfaceName(),
+                        device.modality(),
+                        device.visualizers()));
     }
 
     private void logLedCapability(String deviceId) {
@@ -1319,22 +1347,31 @@ public class FingerprintCaptureService {
                 .ifPresent(leds -> log.info("BioBase device available LEDs: {}", leds));
     }
 
-    private void logPreviewCapabilities(String deviceId) {
+    private void logPreviewCapabilities(String deviceId, String phase) {
         if (!properties.isPreviewDiagnosticsEnabled()) {
             return;
         }
-        logOptionalPreviewProperty(deviceId, PROP_AVAILABLE_PREVIEW_LEVELS);
-        logOptionalPreviewProperty(deviceId, PROP_DEVICE_PREVIEW_FRAME_RATE);
-        logOptionalPreviewProperty(deviceId, PROP_ENCODING_FORMATS_SUPPORTED);
-        logOptionalPreviewProperty(deviceId, PROP_PREVIEW_IMAGE_FORMAT);
-        logOptionalPreviewProperty(deviceId, PROP_PREVIEW_LEVEL);
+        logOptionalPreviewProperty(deviceId, phase, PROP_AVAILABLE_PREVIEW_LEVELS);
+        logOptionalPreviewProperty(deviceId, phase, PROP_DEVICE_PREVIEW_FRAME_RATE);
+        logOptionalPreviewProperty(deviceId, phase, PROP_DEVICE_PREVIEW_IMAGES_SUPPORTED);
+        logOptionalPreviewProperty(deviceId, phase, PROP_ENCODING_FORMATS_SUPPORTED);
+        logOptionalPreviewProperty(deviceId, phase, PROP_PREVIEW_IMAGE_FORMAT);
+        logOptionalPreviewProperty(deviceId, phase, PROP_PREVIEW_LEVEL);
+        logOptionalPreviewProperty(deviceId, phase, PROP_ACTIVE_AREA);
+        logOptionalPreviewProperty(deviceId, phase, PROP_AUTOCONTRAST_ON);
+        logOptionalPreviewProperty(deviceId, phase, PROP_AUTOCONTRAST_WAIT_TIME);
+        logOptionalPreviewProperty(deviceId, phase, PROP_AUTOCAPTURE_ON);
+        logOptionalPreviewProperty(deviceId, phase, PROP_AUTOCAPTURE_NUM_RQD_OBJECTS);
+        logOptionalPreviewProperty(deviceId, phase, PROP_AUTOCAPTURE_OVERRIDE_ON);
+        logOptionalPreviewProperty(deviceId, phase, PROP_VISUALIZATION_MODE);
+        logOptionalPreviewProperty(deviceId, phase, PROP_VISUALIZATION_FULLIMAGE_ON);
     }
 
-    private void logOptionalPreviewProperty(String deviceId, String propertyName) {
+    private void logOptionalPreviewProperty(String deviceId, String phase, String propertyName) {
         try {
-            log.info("BioBase preview property {}={}", propertyName, client.getProperty(deviceId, propertyName));
+            log.info("BioBase preview property [{}] {}={}", phase, propertyName, client.getProperty(deviceId, propertyName));
         } catch (BioBaseException e) {
-            log.debug("BioBase preview property {} is not readable: {}", propertyName, e.getMessage());
+            log.debug("BioBase preview property [{}] {} is not readable: {}", phase, propertyName, e.getMessage());
         }
     }
 
@@ -1807,6 +1844,16 @@ public class FingerprintCaptureService {
                 .replace("&", "&amp;")
                 .replace("<", "&lt;")
                 .replace(">", "&gt;");
+    }
+
+    private static String pointerString(Pointer pointer) {
+        return pointer == null || Pointer.nativeValue(pointer) == 0 ? "" : pointer.getString(0);
+    }
+
+    private static String pointerAddress(Pointer pointer) {
+        return pointer == null || Pointer.nativeValue(pointer) == 0
+                ? "0x0"
+                : "0x" + Long.toHexString(Pointer.nativeValue(pointer));
     }
 
     private static CaptureResponse toResponse(CapturedData data) {

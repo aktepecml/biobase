@@ -2,6 +2,7 @@ package com.example.fingerprint.biobase;
 
 import com.example.fingerprint.api.CaptureResponse;
 import com.example.fingerprint.api.DeviceStatusResponse;
+import com.example.fingerprint.api.DeviceLedResponse;
 import com.example.fingerprint.cmtfinger.CmtFingerNative;
 import com.example.fingerprint.cmtfinger.Cmt_finger_viewspec;
 import com.example.fingerprint.config.FingerprintProperties;
@@ -68,6 +69,10 @@ public class FingerprintCaptureService {
     private static final String PROP_ENCODING_FORMATS_SUPPORTED = "ENCODING_FORMATS_SUPPORTED";
     private static final String PROP_DEVICE_BEEPER_TYPE = "DEVICE_BEEPER_TYPE";
     private static final String PROP_BEEPER_NONE = "BEEPER_NONE";
+    private static final String PROP_DEVICE_LED_TYPE = "DEVICE_LED_TYPE";
+    private static final String PROP_DEVICE_AVAILABLE_LEDS = "DEVICE_AVAILABLE_LEDS";
+    private static final String PROP_LED_TYPE_NONE = "LED_TYPE_NONE";
+    private static final String LED_NONE = "NONE";
 
     private final BioBaseClient client;
     private final FingerprintProperties properties;
@@ -197,6 +202,7 @@ public class FingerprintCaptureService {
         client.registerCallback(deviceId, BioBaseEvent.BIOB_DATA_AVAILABLE, dataAvailableCallback);
         client.openDevice(deviceId, reset);
         activeDeviceId = deviceId;
+        logLedCapability(deviceId);
     }
 
     public void closeDevice(String deviceId, boolean standby) {
@@ -225,6 +231,7 @@ public class FingerprintCaptureService {
             activeImpression.set(effectiveImpression);
             configureCaptureProperties(deviceId, effectiveImpression);
             String effectivePosition = blankToDefault(position, properties.getDefaultPosition());
+            enqueueCaptureStartLed(deviceId);
             client.beginAcquisition(
                     deviceId,
                     effectivePosition,
@@ -233,6 +240,7 @@ public class FingerprintCaptureService {
             long timeout = timeoutSeconds == null ? properties.getCaptureTimeoutSeconds() : timeoutSeconds;
             CapturedData captured = waitForCapture(future, timeout);
             waitUntilAcquisitionStopped(deviceId);
+            enqueueCaptureSuccessLed(deviceId);
             sendCaptureSuccessBeep(deviceId);
             FingerSegmentation segmentation = lastPreviewSegmentation.get();
             CapturedData saved = saveAsImage(captured, "capture");
@@ -253,10 +261,13 @@ public class FingerprintCaptureService {
             return toResponse(saved, segmentation, annotatedPath, croppedPath);
         } catch (TimeoutException e) {
             client.cancelAcquisition(deviceId);
+            enqueueCaptureFailureLed(deviceId);
             throw new BioBaseException("Capture timed out before final fingerprint data arrived.");
         } catch (BioBaseException e) {
+            enqueueCaptureFailureLed(deviceId);
             throw e;
         } catch (Exception e) {
+            enqueueCaptureFailureLed(deviceId);
             throw new BioBaseException("Capture failed: " + e.getMessage());
         } finally {
             pendingCapture.compareAndSet(future, null);
@@ -310,6 +321,23 @@ public class FingerprintCaptureService {
 
     public String propertiesXml(String requestedDeviceId) {
         return client.getProperties(resolveDeviceId(requestedDeviceId));
+    }
+
+    public DeviceLedResponse ledInfo(String requestedDeviceId) {
+        String deviceId = resolveDeviceId(requestedDeviceId);
+        return new DeviceLedResponse(
+                deviceId,
+                getOptionalProperty(deviceId, PROP_DEVICE_LED_TYPE).orElse("unknown"),
+                getOptionalProperty(deviceId, PROP_DEVICE_AVAILABLE_LEDS).orElse("")
+        );
+    }
+
+    public void setStatusLed(String requestedDeviceId, String led) {
+        sendStatusLed(resolveDeviceId(requestedDeviceId), led, "manual");
+    }
+
+    public void clearStatusLeds(String requestedDeviceId) {
+        sendStatusLed(resolveDeviceId(requestedDeviceId), LED_NONE, "manual clear");
     }
 
     public Optional<CapturedData> lastPreview() {
@@ -1281,6 +1309,16 @@ public class FingerprintCaptureService {
                 .ifPresent(type -> log.info("BioBase device beeper type: {}", type));
     }
 
+    private void logLedCapability(String deviceId) {
+        if (!properties.isPreviewDiagnosticsEnabled()) {
+            return;
+        }
+        getOptionalProperty(deviceId, PROP_DEVICE_LED_TYPE)
+                .ifPresent(type -> log.info("BioBase device LED type: {}", type));
+        getOptionalProperty(deviceId, PROP_DEVICE_AVAILABLE_LEDS)
+                .ifPresent(leds -> log.info("BioBase device available LEDs: {}", leds));
+    }
+
     private void logPreviewCapabilities(String deviceId) {
         if (!properties.isPreviewDiagnosticsEnabled()) {
             return;
@@ -1581,6 +1619,83 @@ public class FingerprintCaptureService {
         }
     }
 
+    private void enqueueCaptureStartLed(String deviceId) {
+        if (!properties.isLedEnabled()) {
+            return;
+        }
+        if (properties.isCaptureClearLedsOnStart()) {
+            enqueueStatusLed(deviceId, LED_NONE, "capture start clear", 0, 0);
+        }
+        enqueueStatusLed(deviceId, properties.getCaptureStartLed(), "capture start", 0, 0);
+    }
+
+    private void enqueueCaptureSuccessLed(String deviceId) {
+        if (properties.isLedEnabled()) {
+            enqueueStatusLed(deviceId, properties.getCaptureSuccessLed(), "capture success", 0,
+                    properties.getCaptureResultLedDurationMillis());
+        }
+    }
+
+    private void enqueueCaptureFailureLed(String deviceId) {
+        if (properties.isLedEnabled()) {
+            enqueueStatusLed(deviceId, properties.getCaptureFailureLed(), "capture failure", 0,
+                    properties.getCaptureResultLedDurationMillis());
+        }
+    }
+
+    private void enqueueStatusLed(String deviceId, String led, String reason, long delayMillis, long durationMillis) {
+        if (led == null || led.isBlank()) {
+            return;
+        }
+        deviceOutputExecutor.execute(() -> {
+            if (delayMillis > 0) {
+                sleepBeforeDeviceOutput(delayMillis, reason);
+            }
+            sendStatusLed(deviceId, led, reason);
+            if (durationMillis > 0) {
+                sleepBeforeDeviceOutput(durationMillis, reason + " clear");
+                sendStatusLed(deviceId, LED_NONE, reason + " clear");
+            }
+        });
+    }
+
+    private void sendStatusLed(String deviceId, String led, String reason) {
+        String normalizedLed = led == null || led.isBlank() ? LED_NONE : led.trim();
+        Optional<String> ledType = getOptionalProperty(deviceId, PROP_DEVICE_LED_TYPE);
+        if (ledType.map(type -> PROP_LED_TYPE_NONE.equalsIgnoreCase(type.trim())).orElse(false)) {
+            log.warn("Skipping {} LED because device reports {}", reason, PROP_LED_TYPE_NONE);
+            return;
+        }
+
+        String xml = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+                + "<BioBase Version=\"4.0\" "
+                + "xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" "
+                + "xsi:noNamespaceSchemaLocation=\"BioBase.xsd\">"
+                + "<OutputData>"
+                + "<StatusLeds>"
+                + "<Led>" + escapeXmlText(LED_NONE) + "</Led>"
+                + "<Led>" + escapeXmlText(normalizedLed) + "</Led>"
+                + "</StatusLeds>"
+                + "</OutputData>"
+                + "</BioBase>";
+
+        try {
+            client.setOutputXml(deviceId, xml);
+            log.info("{} LED sent: led={}, ledType={}", reason, normalizedLed, ledType.orElse("unknown"));
+        } catch (BioBaseException e) {
+            log.warn("Could not send {} LED {}: {}", reason, normalizedLed, e.getMessage());
+        }
+    }
+
+    private static void sleepBeforeDeviceOutput(long delayMillis, String reason) {
+        try {
+            Thread.sleep(delayMillis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new BioBaseException("Interrupted before " + reason);
+        }
+    }
+
     private static void sleepBeforeBeep(long delayMillis, String reason, int attempt) {
         try {
             Thread.sleep(delayMillis);
@@ -1616,6 +1731,16 @@ public class FingerprintCaptureService {
         return value
                 .replace("&", "&amp;")
                 .replace("\"", "&quot;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;");
+    }
+
+    private static String escapeXmlText(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value
+                .replace("&", "&amp;")
                 .replace("<", "&lt;")
                 .replace(">", "&gt;");
     }

@@ -38,6 +38,12 @@ public class FingerprintProperties {
     private boolean captureProgressBeepEnabled = true;
     private String captureProgressBeepPattern = "2";
     private String captureProgressBeepVolume = "100";
+    private boolean ledEnabled = true;
+    private boolean captureClearLedsOnStart = true;
+    private String captureStartLed = "";
+    private String captureSuccessLed = "OK_GREEN";
+    private String captureFailureLed = "CANCEL";
+    private long captureResultLedDurationMillis = 750;
 
     public Path getOutputDir() {
         return outputDir;
@@ -301,5 +307,53 @@ public class FingerprintProperties {
 
     public void setCaptureProgressBeepVolume(String captureProgressBeepVolume) {
         this.captureProgressBeepVolume = captureProgressBeepVolume;
+    }
+
+    public boolean isLedEnabled() {
+        return ledEnabled;
+    }
+
+    public void setLedEnabled(boolean ledEnabled) {
+        this.ledEnabled = ledEnabled;
+    }
+
+    public boolean isCaptureClearLedsOnStart() {
+        return captureClearLedsOnStart;
+    }
+
+    public void setCaptureClearLedsOnStart(boolean captureClearLedsOnStart) {
+        this.captureClearLedsOnStart = captureClearLedsOnStart;
+    }
+
+    public String getCaptureStartLed() {
+        return captureStartLed;
+    }
+
+    public void setCaptureStartLed(String captureStartLed) {
+        this.captureStartLed = captureStartLed;
+    }
+
+    public String getCaptureSuccessLed() {
+        return captureSuccessLed;
+    }
+
+    public void setCaptureSuccessLed(String captureSuccessLed) {
+        this.captureSuccessLed = captureSuccessLed;
+    }
+
+    public String getCaptureFailureLed() {
+        return captureFailureLed;
+    }
+
+    public void setCaptureFailureLed(String captureFailureLed) {
+        this.captureFailureLed = captureFailureLed;
+    }
+
+    public long getCaptureResultLedDurationMillis() {
+        return captureResultLedDurationMillis;
+    }
+
+    public void setCaptureResultLedDurationMillis(long captureResultLedDurationMillis) {
+        this.captureResultLedDurationMillis = captureResultLedDurationMillis;
     }
 }

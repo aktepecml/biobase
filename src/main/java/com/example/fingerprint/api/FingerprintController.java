@@ -72,6 +72,23 @@ public class FingerprintController {
         return service.propertiesXml(deviceId);
     }
 
+    @GetMapping("/devices/{deviceId}/leds")
+    public DeviceLedResponse leds(@PathVariable String deviceId) {
+        return service.ledInfo(deviceId);
+    }
+
+    @PostMapping("/devices/{deviceId}/led")
+    public ApiMessage setLed(@PathVariable String deviceId, @RequestParam String led) {
+        service.setStatusLed(deviceId, led);
+        return new ApiMessage("Device LED command sent: " + led);
+    }
+
+    @PostMapping("/devices/{deviceId}/led/off")
+    public ApiMessage clearLeds(@PathVariable String deviceId) {
+        service.clearStatusLeds(deviceId);
+        return new ApiMessage("Device LED clear command sent.");
+    }
+
     @PostMapping("/capture")
     public CaptureResponse capture(@RequestBody(required = false) CaptureRequest request) {
         CaptureRequest body = request == null ? new CaptureRequest(null, null, null, null) : request;

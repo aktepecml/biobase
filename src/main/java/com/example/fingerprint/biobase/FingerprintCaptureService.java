@@ -231,7 +231,7 @@ public class FingerprintCaptureService {
             activeImpression.set(effectiveImpression);
             configureCaptureProperties(deviceId, effectiveImpression);
             String effectivePosition = blankToDefault(position, properties.getDefaultPosition());
-            enqueueCaptureStartLed(deviceId);
+            enqueueCaptureStartLed(deviceId, effectivePosition);
             client.beginAcquisition(
                     deviceId,
                     effectivePosition,
@@ -1619,39 +1619,43 @@ public class FingerprintCaptureService {
         }
     }
 
-    private void enqueueCaptureStartLed(String deviceId) {
+    private void enqueueCaptureStartLed(String deviceId, String position) {
         if (!properties.isLedEnabled()) {
             return;
         }
         if (properties.isCaptureClearLedsOnStart()) {
             enqueueStatusLed(deviceId, LED_NONE, "capture start clear", 0, 0);
         }
-        enqueueStatusLed(deviceId, properties.getCaptureStartLed(), "capture start", 0, 0);
+        enqueueStatusLeds(deviceId, captureStartLeds(position), "capture start", 0, 0);
     }
 
     private void enqueueCaptureSuccessLed(String deviceId) {
         if (properties.isLedEnabled()) {
-            enqueueStatusLed(deviceId, properties.getCaptureSuccessLed(), "capture success", 0,
+            enqueueStatusLeds(deviceId, parseLedSpec(properties.getCaptureSuccessLed()), "capture success", 0,
                     properties.getCaptureResultLedDurationMillis());
         }
     }
 
     private void enqueueCaptureFailureLed(String deviceId) {
         if (properties.isLedEnabled()) {
-            enqueueStatusLed(deviceId, properties.getCaptureFailureLed(), "capture failure", 0,
+            enqueueStatusLeds(deviceId, parseLedSpec(properties.getCaptureFailureLed()), "capture failure", 0,
                     properties.getCaptureResultLedDurationMillis());
         }
     }
 
     private void enqueueStatusLed(String deviceId, String led, String reason, long delayMillis, long durationMillis) {
-        if (led == null || led.isBlank()) {
+        enqueueStatusLeds(deviceId, parseLedSpec(led), reason, delayMillis, durationMillis);
+    }
+
+    private void enqueueStatusLeds(String deviceId, List<String> leds, String reason, long delayMillis, long durationMillis) {
+        if (leds.isEmpty()) {
             return;
         }
         deviceOutputExecutor.execute(() -> {
             if (delayMillis > 0) {
                 sleepBeforeDeviceOutput(delayMillis, reason);
             }
-            sendStatusLed(deviceId, led, reason);
+            sendStatusLeds(deviceId, leds, reason);
             if (durationMillis > 0) {
                 sleepBeforeDeviceOutput(durationMillis, reason + " clear");
                 sendStatusLed(deviceId, LED_NONE, reason + " clear");
@@ -1660,11 +1664,23 @@ public class FingerprintCaptureService {
     }
 
     private void sendStatusLed(String deviceId, String led, String reason) {
-        String normalizedLed = led == null || led.isBlank() ? LED_NONE : led.trim();
+        sendStatusLeds(deviceId, parseLedSpec(led), reason);
+    }
+
+    private void sendStatusLeds(String deviceId, List<String> leds, String reason) {
+        List<String> normalizedLeds = leds.isEmpty() ? List.of(LED_NONE) : leds;
         Optional<String> ledType = getOptionalProperty(deviceId, PROP_DEVICE_LED_TYPE);
         if (ledType.map(type -> PROP_LED_TYPE_NONE.equalsIgnoreCase(type.trim())).orElse(false)) {
             log.warn("Skipping {} LED because device reports {}", reason, PROP_LED_TYPE_NONE);
             return;
+        }
+
+        StringBuilder ledXml = new StringBuilder();
+        if (!normalizedLeds.contains(LED_NONE)) {
+            ledXml.append("<Led>").append(escapeXmlText(LED_NONE)).append("</Led>");
+        }
+        for (String led : normalizedLeds) {
+            ledXml.append("<Led>").append(escapeXmlText(led)).append("</Led>");
         }
 
         String xml = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
@@ -1673,18 +1689,66 @@ public class FingerprintCaptureService {
                 + "xsi:noNamespaceSchemaLocation=\"BioBase.xsd\">"
                 + "<OutputData>"
                 + "<StatusLeds>"
-                + "<Led>" + escapeXmlText(LED_NONE) + "</Led>"
-                + "<Led>" + escapeXmlText(normalizedLed) + "</Led>"
+                + ledXml
                 + "</StatusLeds>"
                 + "</OutputData>"
                 + "</BioBase>";
 
         try {
             client.setOutputXml(deviceId, xml);
-            log.info("{} LED sent: led={}, ledType={}", reason, normalizedLed, ledType.orElse("unknown"));
+            log.info("{} LED sent: leds={}, ledType={}", reason, normalizedLeds, ledType.orElse("unknown"));
         } catch (BioBaseException e) {
-            log.warn("Could not send {} LED {}: {}", reason, normalizedLed, e.getMessage());
+            log.warn("Could not send {} LEDs {}: {}", reason, normalizedLeds, e.getMessage());
         }
+    }
+
+    private List<String> captureStartLeds(String position) {
+        String configured = properties.getCaptureStartLed();
+        if (configured == null || configured.isBlank()) {
+            return List.of();
+        }
+        if (!"AUTO".equalsIgnoreCase(configured.trim())) {
+            return parseLedSpec(configured);
+        }
+        return modeIconLeds(position);
+    }
+
+    private static List<String> parseLedSpec(String ledSpec) {
+        if (ledSpec == null || ledSpec.isBlank()) {
+            return List.of();
+        }
+        String[] parts = ledSpec.split("[,;\\s]+");
+        ArrayList<String> leds = new ArrayList<>();
+        for (String part : parts) {
+            String led = part.trim();
+            if (!led.isEmpty()) {
+                leds.add(led);
+            }
+        }
+        return List.copyOf(leds);
+    }
+
+    private static List<String> modeIconLeds(String position) {
+        if (position == null || position.isBlank()) {
+            return List.of();
+        }
+        String normalized = position.toLowerCase(java.util.Locale.ROOT);
+        if (normalized.contains("boththumb")) {
+            return List.of("I2_GREEN_B1", "I2_GREEN_B2", "I4_GREEN_B1", "I4_GREEN_B2");
+        }
+        if (normalized.contains("rightthumb")) {
+            return List.of("I4_GREEN_B1", "I4_GREEN_B2");
+        }
+        if (normalized.contains("leftthumb")) {
+            return List.of("I2_GREEN_B1", "I2_GREEN_B2");
+        }
+        if (normalized.contains("right") && !normalized.contains("palm")) {
+            return List.of("I3_GREEN_B1", "I3_GREEN_B2");
+        }
+        if (normalized.contains("left") && !normalized.contains("palm")) {
+            return List.of("I1_GREEN_B1", "I1_GREEN_B2");
+        }
+        return List.of();
     }
 
     private static void sleepBeforeDeviceOutput(long delayMillis, String reason) {

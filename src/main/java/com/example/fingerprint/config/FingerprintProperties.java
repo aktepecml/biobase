@@ -40,10 +40,10 @@ public class FingerprintProperties {
     private String captureProgressBeepVolume = "100";
     private boolean ledEnabled = true;
     private boolean captureClearLedsOnStart = true;
-    private String captureStartLed = "";
-    private String captureSuccessLed = "OK_GREEN";
-    private String captureFailureLed = "CANCEL";
-    private long captureResultLedDurationMillis = 750;
+    private String captureStartLed = "AUTO";
+    private String captureSuccessLed = "S1_GREEN_B1,S2_GREEN_B1,S3_GREEN_B1,S4_GREEN_B1";
+    private String captureFailureLed = "S1_RED_B2,S2_RED_B2,S3_RED_B2,S4_RED_B2";
+    private long captureResultLedDurationMillis = 1500;
 
     public Path getOutputDir() {
         return outputDir;

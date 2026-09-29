@@ -6,11 +6,11 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "fingerprint")
 public class FingerprintProperties {
     private Path outputDir = Path.of("captures");
-    private String defaultPosition = "RightIndex";
+    private String defaultPosition = "BothThumbs";
     private String defaultImpression = "FingerprintFlat";
     private long captureTimeoutSeconds = 0;
     private boolean autoCaptureEnabled = true;
-    private int autoCaptureRequiredObjects = 1;
+    private int autoCaptureRequiredObjects = 2;
     private boolean autoContrastEnabled = true;
     private String imageResolution = "500";
     private String activeArea = "0 0 0 0";
@@ -42,8 +42,8 @@ public class FingerprintProperties {
     private boolean liveQualityLedEnabled = true;
     private boolean captureClearLedsOnStart = true;
     private String captureStartLed = "AUTO";
-    private String captureSuccessLed = "S1_GREEN_B1,S2_GREEN_B1,S3_GREEN_B1,S4_GREEN_B1";
-    private String captureFailureLed = "S1_RED_B2,S2_RED_B2,S3_RED_B2,S4_RED_B2";
+    private String captureSuccessLed = "";
+    private String captureFailureLed = "";
     private long captureResultLedDurationMillis = 1500;
 
     public Path getOutputDir() {

@@ -132,6 +132,15 @@ public class BioBaseClient {
         requireSuccess("BioB_SetOutputData", ret.getValue());
     }
 
+    public synchronized void setVisualizationWindow(String deviceId, long windowHandle, String visualizerType, int os) {
+        if (windowHandle == 0) {
+            throw new BioBaseException("Visualization window handle must not be 0.");
+        }
+        IntByReference ret = new IntByReference();
+        nativeApi.BioB_SetVisualizationWindow(deviceId, Pointer.createConstant(windowHandle), visualizerType, os, ret);
+        requireSuccess("BioB_SetVisualizationWindow", ret.getValue());
+    }
+
     public synchronized int beginAcquisition(String deviceId, String position, String impression) {
         IntByReference ret = new IntByReference();
         nativeApi.BioB_BeginAcquisitionProcess(deviceId, position, impression, ret);

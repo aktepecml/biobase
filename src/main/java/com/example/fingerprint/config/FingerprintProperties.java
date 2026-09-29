@@ -39,6 +39,7 @@ public class FingerprintProperties {
     private String captureProgressBeepPattern = "2";
     private String captureProgressBeepVolume = "100";
     private boolean ledEnabled = true;
+    private boolean liveQualityLedEnabled = true;
     private boolean captureClearLedsOnStart = true;
     private String captureStartLed = "AUTO";
     private String captureSuccessLed = "S1_GREEN_B1,S2_GREEN_B1,S3_GREEN_B1,S4_GREEN_B1";
@@ -315,6 +316,14 @@ public class FingerprintProperties {
 
     public void setLedEnabled(boolean ledEnabled) {
         this.ledEnabled = ledEnabled;
+    }
+
+    public boolean isLiveQualityLedEnabled() {
+        return liveQualityLedEnabled;
+    }
+
+    public void setLiveQualityLedEnabled(boolean liveQualityLedEnabled) {
+        this.liveQualityLedEnabled = liveQualityLedEnabled;
     }
 
     public boolean isCaptureClearLedsOnStart() {

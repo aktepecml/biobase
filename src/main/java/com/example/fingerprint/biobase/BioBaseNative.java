@@ -38,6 +38,8 @@ public interface BioBaseNative extends StdCallLibrary {
 
     void BioB_SetOutputData(String deviceId, BioBSetOutputData data, IntByReference retCode);
 
+    void BioB_SetVisualizationWindow(String deviceId, Pointer window, String visualizerType, int os, IntByReference retCode);
+
     void BioB_CancelAcquisition(String deviceId, IntByReference retCode);
 
     void BioB_BeginAcquisitionProcess(String deviceId, String positionType, String impressionType, IntByReference retCode);

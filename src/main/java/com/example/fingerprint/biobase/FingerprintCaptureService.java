@@ -70,6 +70,10 @@ public class FingerprintCaptureService {
     private static final String PROP_ENCODING_FORMATS_SUPPORTED = "ENCODING_FORMATS_SUPPORTED";
     private static final String PROP_VISUALIZATION_MODE = "VISUALIZATION_MODE";
     private static final String PROP_VISUALIZATION_FULLIMAGE_ON = "VISUALIZATION_FULLIMAGE_ON";
+    private static final String PROP_VISUALIZATION_BK_COLOR = "VISUALIZATION_BK_COLOR";
+    private static final String PROP_VISMODE_PREVIEW_ONLY = "PreviewOnly";
+    private static final String PROP_VISUALIZATION_FINGER_WINDOW = "FingerWnd";
+    private static final String PROP_DEFAULT_BK_COLOR = "255 255 255";
     private static final String PROP_AUTOCONTRAST_WAIT_TIME = "AUTOCONTRAST_WAIT_TIME";
     private static final String PROP_DEVICE_BEEPER_TYPE = "DEVICE_BEEPER_TYPE";
     private static final String PROP_BEEPER_NONE = "BEEPER_NONE";
@@ -92,6 +96,8 @@ public class FingerprintCaptureService {
     private final AtomicReference<List<Integer>> lastObjectQualityStates = new AtomicReference<>(List.of());
     private final AtomicReference<CompletableFuture<CapturedData>> pendingCapture = new AtomicReference<>();
     private final AtomicReference<String> activeImpression = new AtomicReference<>();
+    private final AtomicReference<String> activePosition = new AtomicReference<>();
+    private final AtomicReference<List<String>> lastQualityLedState = new AtomicReference<>(List.of());
     private final AtomicBoolean previewSeenLogged = new AtomicBoolean(false);
     private final AtomicBoolean captureSuccessBeepSent = new AtomicBoolean(false);
     private final AtomicBoolean captureProgressBeepSent = new AtomicBoolean(false);
@@ -174,6 +180,7 @@ public class FingerprintCaptureService {
             List<Integer> previous = lastObjectQualityStates.getAndSet(List.copyOf(states));
             if (!previous.equals(states)) {
                 log.debug("Object quality changed: {}", toQualityLog(states));
+                enqueueLiveQualityLeds(deviceId, states);
             }
         };
         this.objectCountCallback = (deviceId, context, objectCountState) -> {
@@ -242,6 +249,7 @@ public class FingerprintCaptureService {
             activeImpression.set(effectiveImpression);
             configureCaptureProperties(deviceId, effectiveImpression);
             String effectivePosition = blankToDefault(position, properties.getDefaultPosition());
+            activePosition.set(effectivePosition);
             enqueueCaptureStartLed(deviceId, effectivePosition);
             client.beginAcquisition(
                     deviceId,
@@ -283,6 +291,8 @@ public class FingerprintCaptureService {
         } finally {
             pendingCapture.compareAndSet(future, null);
             activeImpression.set(null);
+            activePosition.set(null);
+            lastQualityLedState.set(List.of());
         }
     }
 
@@ -349,6 +359,17 @@ public class FingerprintCaptureService {
 
     public void clearStatusLeds(String requestedDeviceId) {
         sendStatusLed(resolveDeviceId(requestedDeviceId), LED_NONE, "manual clear");
+    }
+
+    public void setVisualizationWindow(String requestedDeviceId, String windowHandle) {
+        String deviceId = resolveDeviceId(requestedDeviceId);
+        long handle = parseWindowHandle(windowHandle);
+        client.setVisualizationWindow(deviceId, handle, PROP_VISUALIZATION_FINGER_WINDOW, 0);
+        setOptionalProperty(deviceId, PROP_VISUALIZATION_MODE, PROP_VISMODE_PREVIEW_ONLY);
+        setOptionalProperty(deviceId, PROP_VISUALIZATION_FULLIMAGE_ON, PROP_FALSE);
+        setOptionalProperty(deviceId, PROP_VISUALIZATION_BK_COLOR, PROP_DEFAULT_BK_COLOR);
+        log.info("BioBase visualization window set: deviceId={}, handle=0x{}, visualizer={}",
+                deviceId, Long.toHexString(handle), PROP_VISUALIZATION_FINGER_WINDOW);
     }
 
     public Optional<CapturedData> lastPreview() {
@@ -1680,6 +1701,25 @@ public class FingerprintCaptureService {
         }
     }
 
+    private void enqueueLiveQualityLeds(String deviceId, List<Integer> qualityStates) {
+        if (!properties.isLedEnabled() || !properties.isLiveQualityLedEnabled()) {
+            return;
+        }
+        if (pendingCapture.get() == null) {
+            return;
+        }
+
+        List<String> leds = liveQualityLeds(qualityStates, activePosition.get());
+        if (leds.isEmpty()) {
+            return;
+        }
+        List<String> previous = lastQualityLedState.getAndSet(leds);
+        if (previous.equals(leds)) {
+            return;
+        }
+        enqueueStatusLeds(deviceId, leds, "live quality", 0, 0);
+    }
+
     private void enqueueStatusLed(String deviceId, String led, String reason, long delayMillis, long durationMillis) {
         enqueueStatusLeds(deviceId, parseLedSpec(led), reason, delayMillis, durationMillis);
     }
@@ -1763,6 +1803,60 @@ public class FingerprintCaptureService {
             }
         }
         return List.copyOf(leds);
+    }
+
+    private static List<String> liveQualityLeds(List<Integer> qualityStates, String position) {
+        if (qualityStates == null || qualityStates.isEmpty()) {
+            return modeIconLeds(position);
+        }
+
+        ArrayList<String> leds = new ArrayList<>();
+        int count = Math.min(qualityStates.size(), 4);
+        for (int index = 0; index < count; index++) {
+            leds.addAll(statusQualityLeds(index + 1, BioBaseObjectQualityState.fromValue(qualityStates.get(index))));
+        }
+        leds.addAll(modeIconLeds(position));
+        return List.copyOf(leds);
+    }
+
+    private static List<String> statusQualityLeds(int statusIndex, BioBaseObjectQualityState qualityState) {
+        if (qualityState == BioBaseObjectQualityState.BIOB_OBJECT_NOT_PRESENT || qualityState == BioBaseObjectQualityState.UNKNOWN) {
+            return List.of();
+        }
+
+        String prefix = "S" + statusIndex + "_";
+        return switch (qualityState) {
+            case BIOB_OBJECT_GOOD -> List.of(prefix + "GREEN_B1", prefix + "GREEN_B2");
+            case BIOB_OBJECT_TRACKING_NOT_OK -> List.of(
+                    prefix + "RED_B1",
+                    prefix + "RED_B2",
+                    prefix + "GREEN_B1",
+                    prefix + "GREEN_B2"
+            );
+            case BIOB_OBJECT_TOO_DARK,
+                 BIOB_OBJECT_TOO_LIGHT,
+                 BIOB_OBJECT_BAD_SHAPE,
+                 BIOB_OBJECT_POSITION_NOT_OK,
+                 BIOB_OBJECT_POSITION_TOO_HIGH,
+                 BIOB_OBJECT_POSITION_TOO_LEFT,
+                 BIOB_OBJECT_POSITION_TOO_RIGHT,
+                 BIOB_OBJECT_POSITION_TOO_LOW,
+                 BIOB_OBJECT_FLEX_POSITION_TOO_HIGH,
+                 BIOB_OBJECT_FLEX_POSITION_TOO_LEFT,
+                 BIOB_OBJECT_FLEX_POSITION_TOO_RIGHT,
+                 BIOB_OBJECT_FLEX_POSITION_TOO_LOW,
+                 BIOB_OBJECT_CORE_NOT_PRESENT,
+                 BIOB_OBJECT_TOO_CLOSE,
+                 BIOB_OBJECT_TOO_FAR,
+                 BIOB_OBJECT_NOT_FOCUSED,
+                 BIOB_OBJECT_NOT_STILL,
+                 BIOB_OBJECT_NOT_ALIGNED,
+                 BIOB_OBJECT_OCCLUSION,
+                 BIOB_OBJECT_CONFUSION,
+                 BIOB_OBJECT_ROTATED_CLOCKWISE,
+                 BIOB_OBJECT_ROTATED_COUNTERCLOCKWISE -> List.of(prefix + "RED_B1", prefix + "RED_B2");
+            default -> List.of();
+        };
     }
 
     private static List<String> modeIconLeds(String position) {
@@ -1854,6 +1948,21 @@ public class FingerprintCaptureService {
         return pointer == null || Pointer.nativeValue(pointer) == 0
                 ? "0x0"
                 : "0x" + Long.toHexString(Pointer.nativeValue(pointer));
+    }
+
+    private static long parseWindowHandle(String value) {
+        if (value == null || value.isBlank()) {
+            throw new BioBaseException("Visualization window handle is required.");
+        }
+        String trimmed = value.trim();
+        try {
+            if (trimmed.startsWith("0x") || trimmed.startsWith("0X")) {
+                return Long.parseUnsignedLong(trimmed.substring(2), 16);
+            }
+            return Long.parseUnsignedLong(trimmed);
+        } catch (NumberFormatException e) {
+            throw new BioBaseException("Invalid visualization window handle: " + value);
+        }
     }
 
     private static CaptureResponse toResponse(CapturedData data) {

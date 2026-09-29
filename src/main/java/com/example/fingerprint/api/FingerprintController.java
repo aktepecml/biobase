@@ -89,6 +89,12 @@ public class FingerprintController {
         return new ApiMessage("Device LED clear command sent.");
     }
 
+    @PostMapping("/devices/{deviceId}/visualization/window")
+    public ApiMessage setVisualizationWindow(@PathVariable String deviceId, @RequestParam String windowHandle) {
+        service.setVisualizationWindow(deviceId, windowHandle);
+        return new ApiMessage("Device visualization window set.");
+    }
+
     @PostMapping("/capture")
     public CaptureResponse capture(@RequestBody(required = false) CaptureRequest request) {
         CaptureRequest body = request == null ? new CaptureRequest(null, null, null, null) : request;

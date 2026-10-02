@@ -28,8 +28,14 @@ public class FingerprintProperties {
     private boolean previewSegmentationEnabled = true;
     private boolean previewDiagnosticsEnabled = true;
     private long previewDiagnosticsIntervalMillis = 5000;
+    private boolean patrolFlatSpeedModeEnabled = true;
+    private String patrolFlatPreviewLevel = "Low";
+    private boolean patrolFlatAutoContrastEnabled = false;
     private boolean consoleRunnerEnabled = true;
     private boolean consoleCloseWhenDone = false;
+    private boolean nativePreviewWindowEnabled = true;
+    private int nativePreviewWindowWidth = 640;
+    private int nativePreviewWindowHeight = 480;
     private boolean captureSuccessBeepEnabled = true;
     private String captureSuccessBeepPattern = "3";
     private String captureSuccessBeepVolume = "100";
@@ -230,6 +236,30 @@ public class FingerprintProperties {
         this.previewDiagnosticsIntervalMillis = previewDiagnosticsIntervalMillis;
     }
 
+    public boolean isPatrolFlatSpeedModeEnabled() {
+        return patrolFlatSpeedModeEnabled;
+    }
+
+    public void setPatrolFlatSpeedModeEnabled(boolean patrolFlatSpeedModeEnabled) {
+        this.patrolFlatSpeedModeEnabled = patrolFlatSpeedModeEnabled;
+    }
+
+    public String getPatrolFlatPreviewLevel() {
+        return patrolFlatPreviewLevel;
+    }
+
+    public void setPatrolFlatPreviewLevel(String patrolFlatPreviewLevel) {
+        this.patrolFlatPreviewLevel = patrolFlatPreviewLevel;
+    }
+
+    public boolean isPatrolFlatAutoContrastEnabled() {
+        return patrolFlatAutoContrastEnabled;
+    }
+
+    public void setPatrolFlatAutoContrastEnabled(boolean patrolFlatAutoContrastEnabled) {
+        this.patrolFlatAutoContrastEnabled = patrolFlatAutoContrastEnabled;
+    }
+
     public boolean isConsoleRunnerEnabled() {
         return consoleRunnerEnabled;
     }
@@ -244,6 +274,30 @@ public class FingerprintProperties {
 
     public void setConsoleCloseWhenDone(boolean consoleCloseWhenDone) {
         this.consoleCloseWhenDone = consoleCloseWhenDone;
+    }
+
+    public boolean isNativePreviewWindowEnabled() {
+        return nativePreviewWindowEnabled;
+    }
+
+    public void setNativePreviewWindowEnabled(boolean nativePreviewWindowEnabled) {
+        this.nativePreviewWindowEnabled = nativePreviewWindowEnabled;
+    }
+
+    public int getNativePreviewWindowWidth() {
+        return nativePreviewWindowWidth;
+    }
+
+    public void setNativePreviewWindowWidth(int nativePreviewWindowWidth) {
+        this.nativePreviewWindowWidth = nativePreviewWindowWidth;
+    }
+
+    public int getNativePreviewWindowHeight() {
+        return nativePreviewWindowHeight;
+    }
+
+    public void setNativePreviewWindowHeight(int nativePreviewWindowHeight) {
+        this.nativePreviewWindowHeight = nativePreviewWindowHeight;
     }
 
     public boolean isCaptureSuccessBeepEnabled() {

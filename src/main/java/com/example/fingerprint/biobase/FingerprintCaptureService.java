@@ -1278,7 +1278,10 @@ public class FingerprintCaptureService {
         setOptionalProperty(deviceId, PROP_IMAGE_RESOLUTION, properties.getImageResolution());
 
         boolean flatCapture = "FingerprintFlat".equalsIgnoreCase(impression);
-        String autoContrast = properties.isAutoContrastEnabled() && flatCapture ? PROP_TRUE : PROP_FALSE;
+        boolean autoContrastEnabled = isPatrolFlatSpeedMode(deviceId, impression)
+                ? properties.isPatrolFlatAutoContrastEnabled()
+                : properties.isAutoContrastEnabled();
+        String autoContrast = autoContrastEnabled && flatCapture ? PROP_TRUE : PROP_FALSE;
         setOptionalProperty(deviceId, PROP_AUTOCONTRAST_ON, autoContrast);
     }
 
@@ -1333,7 +1336,7 @@ public class FingerprintCaptureService {
     private void configurePreview(String deviceId) {
         logPreviewCapabilities(deviceId, "before");
         setOptionalProperty(deviceId, PROP_PREVIEW_IMAGE_FORMAT, properties.getPreviewImageFormat());
-        setOptionalProperty(deviceId, PROP_PREVIEW_LEVEL, properties.getPreviewLevel());
+        setOptionalProperty(deviceId, PROP_PREVIEW_LEVEL, effectivePreviewLevel(deviceId));
         logPreviewCapabilities(deviceId, "after");
     }
 
@@ -1356,6 +1359,27 @@ public class FingerprintCaptureService {
                         device.interfaceName(),
                         device.modality(),
                         device.visualizers()));
+    }
+
+    private String effectivePreviewLevel(String deviceId) {
+        if (isPatrolFlatSpeedMode(deviceId, activeImpression.get())) {
+            return blankToDefault(properties.getPatrolFlatPreviewLevel(), properties.getPreviewLevel());
+        }
+        return properties.getPreviewLevel();
+    }
+
+    private boolean isPatrolFlatSpeedMode(String deviceId, String impression) {
+        return properties.isPatrolFlatSpeedModeEnabled()
+                && "FingerprintFlat".equalsIgnoreCase(impression)
+                && isPatrolDevice(deviceId);
+    }
+
+    private boolean isPatrolDevice(String deviceId) {
+        return devices().stream()
+                .filter(device -> Objects.equals(device.deviceId(), deviceId))
+                .map(DeviceInfo::modelName)
+                .filter(Objects::nonNull)
+                .anyMatch(model -> model.toUpperCase(java.util.Locale.ROOT).contains("PATROL"));
     }
 
     private void logLedCapability(String deviceId) {

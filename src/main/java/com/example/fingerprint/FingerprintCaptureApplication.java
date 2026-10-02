@@ -6,6 +6,8 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 @SpringBootApplication
 public class FingerprintCaptureApplication {
     public static void main(String[] args) {
-        SpringApplication.run(FingerprintCaptureApplication.class, args);
+        SpringApplication application = new SpringApplication(FingerprintCaptureApplication.class);
+        application.setHeadless(false);
+        application.run(args);
     }
 }

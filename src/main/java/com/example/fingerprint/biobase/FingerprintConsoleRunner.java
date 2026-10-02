@@ -15,16 +15,13 @@ public class FingerprintConsoleRunner implements ApplicationRunner {
 
     private final FingerprintCaptureService service;
     private final FingerprintProperties properties;
-    private final NativePreviewWindow nativePreviewWindow;
 
     public FingerprintConsoleRunner(
             FingerprintCaptureService service,
-            FingerprintProperties properties,
-            NativePreviewWindow nativePreviewWindow
+            FingerprintProperties properties
     ) {
         this.service = service;
         this.properties = properties;
-        this.nativePreviewWindow = nativePreviewWindow;
     }
 
     @Override
@@ -49,7 +46,6 @@ public class FingerprintConsoleRunner implements ApplicationRunner {
             deviceId = device.deviceId();
             log.info("Opening first BioBase device: {} / {}", device.modelName(), deviceId);
             service.openDevice(deviceId, false);
-            openNativePreviewWindow(device);
 
             log.info("Starting continuous capture loop. Press Ctrl+C to stop application.");
 
@@ -84,7 +80,6 @@ public class FingerprintConsoleRunner implements ApplicationRunner {
         } catch (Exception e) {
             log.error("Critical error in fingerprint system initialization", e);
         } finally {
-            nativePreviewWindow.close();
             // Uygulama kapanırken kaynakları güvenli bir şekilde temizle
             if (deviceId != null) {
                 try {
@@ -101,10 +96,5 @@ public class FingerprintConsoleRunner implements ApplicationRunner {
                 log.error("Failed to close BioBase system", e);
             }
         }
-    }
-
-    private void openNativePreviewWindow(DeviceInfo device) {
-        nativePreviewWindow.open("BioBase Preview - " + device.modelName())
-                .ifPresent(handle -> service.setVisualizationWindow(device.deviceId(), "0x" + Long.toHexString(handle)));
     }
 }

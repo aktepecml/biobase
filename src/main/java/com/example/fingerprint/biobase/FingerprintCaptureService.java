@@ -84,6 +84,7 @@ public class FingerprintCaptureService {
 
     private final BioBaseClient client;
     private final FingerprintProperties properties;
+    private final NativePreviewWindow nativePreviewWindow;
     private final ExecutorService deviceOutputExecutor = Executors.newSingleThreadExecutor(r -> {
         Thread thread = new Thread(r, "biobase-device-output");
         thread.setDaemon(true);
@@ -116,9 +117,10 @@ public class FingerprintCaptureService {
     private final BioBaseNative.ObjectQualityCallback objectQualityCallback;
     private final BioBaseNative.ObjectCountCallback objectCountCallback;
 
-    public FingerprintCaptureService(BioBaseClient client, FingerprintProperties properties) {
+    public FingerprintCaptureService(BioBaseClient client, FingerprintProperties properties, NativePreviewWindow nativePreviewWindow) {
         this.client = client;
         this.properties = properties;
+        this.nativePreviewWindow = nativePreviewWindow;
         this.previewCallback = (deviceId, context, data) -> {
             if (data != null) {
                 BioBaseNative.BioBData nativeData = client.readNativeData(data);
@@ -221,10 +223,12 @@ public class FingerprintCaptureService {
         activeDeviceId = deviceId;
         logDeviceInfo(deviceId);
         logLedCapability(deviceId);
+        openNativePreviewWindow(deviceId);
     }
 
     public void closeDevice(String deviceId, boolean standby) {
         unregisterCallbacks(deviceId);
+        nativePreviewWindow.close();
         client.closeDevice(deviceId, standby);
         if (Objects.equals(activeDeviceId, deviceId)) {
             activeDeviceId = null;
@@ -370,6 +374,16 @@ public class FingerprintCaptureService {
         setOptionalProperty(deviceId, PROP_VISUALIZATION_BK_COLOR, PROP_DEFAULT_BK_COLOR);
         log.info("BioBase visualization window set: deviceId={}, handle=0x{}, visualizer={}",
                 deviceId, Long.toHexString(handle), PROP_VISUALIZATION_FINGER_WINDOW);
+    }
+
+    private void openNativePreviewWindow(String deviceId) {
+        String title = devices().stream()
+                .filter(device -> Objects.equals(device.deviceId(), deviceId))
+                .findFirst()
+                .map(device -> "BioBase Preview - " + device.modelName())
+                .orElse("BioBase Preview - " + deviceId);
+        nativePreviewWindow.open(title)
+                .ifPresent(handle -> setVisualizationWindow(deviceId, "0x" + Long.toHexString(handle)));
     }
 
     public Optional<CapturedData> lastPreview() {

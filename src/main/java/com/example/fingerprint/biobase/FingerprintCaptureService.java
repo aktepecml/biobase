@@ -26,6 +26,8 @@ import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -90,6 +92,11 @@ public class FingerprintCaptureService {
         thread.setDaemon(true);
         return thread;
     });
+    private final ScheduledExecutorService nativePreviewCaptureExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread thread = new Thread(r, "native-preview-capture");
+        thread.setDaemon(true);
+        return thread;
+    });
     private final AtomicReference<CapturedData> lastPreview = new AtomicReference<>();
     private final AtomicReference<FingerSegmentation> lastPreviewSegmentation = new AtomicReference<>(FingerSegmentation.empty());
     private final AtomicReference<CapturedData> lastCapture = new AtomicReference<>();
@@ -102,12 +109,15 @@ public class FingerprintCaptureService {
     private final AtomicBoolean previewSeenLogged = new AtomicBoolean(false);
     private final AtomicBoolean captureSuccessBeepSent = new AtomicBoolean(false);
     private final AtomicBoolean captureProgressBeepSent = new AtomicBoolean(false);
+    private final AtomicBoolean nativePreviewCaptureFailureLogged = new AtomicBoolean(false);
+    private final AtomicBoolean nativePreviewFileLogged = new AtomicBoolean(false);
     private final AtomicLong lastPreviewCachedAtMillis = new AtomicLong(0);
     private final AtomicLong previewMetricWindowStartedAtMillis = new AtomicLong(0);
     private final AtomicLong previewMetricFrames = new AtomicLong(0);
     private final AtomicLong previewMetricCachedFrames = new AtomicLong(0);
     private final AtomicLong previewMetricBytes = new AtomicLong(0);
     private final AtomicLong previewMetricCopyNanos = new AtomicLong(0);
+    private final AtomicReference<ScheduledFuture<?>> nativePreviewCaptureTask = new AtomicReference<>();
     private volatile String activeDeviceId;
 
     private final BioBaseNative.PreviewCallback previewCallback;
@@ -134,6 +144,10 @@ public class FingerprintCaptureService {
                             pointerString(nativeData.structName),
                             pointerAddress(nativeData.extStruct),
                             pointerAddress(nativeData.buffer));
+                }
+                if (shouldUseNativePreviewCapture()) {
+                    recordPreviewMetrics(format, bufferSize, false, 0);
+                    return;
                 }
                 if (shouldCachePreviewPayload()) {
                     long copyStartedAtNanos = System.nanoTime();
@@ -228,6 +242,7 @@ public class FingerprintCaptureService {
 
     public void closeDevice(String deviceId, boolean standby) {
         unregisterCallbacks(deviceId);
+        stopNativePreviewCapture();
         nativePreviewWindow.close();
         client.closeDevice(deviceId, standby);
         if (Objects.equals(activeDeviceId, deviceId)) {
@@ -383,7 +398,81 @@ public class FingerprintCaptureService {
                 .map(device -> "BioBase Preview - " + device.modelName())
                 .orElse("BioBase Preview - " + deviceId);
         nativePreviewWindow.open(title)
-                .ifPresent(handle -> setVisualizationWindow(deviceId, "0x" + Long.toHexString(handle)));
+                .ifPresent(handle -> {
+                    setVisualizationWindow(deviceId, "0x" + Long.toHexString(handle));
+                    startNativePreviewCapture(deviceId);
+                });
+    }
+
+    private boolean shouldUseNativePreviewCapture() {
+        return properties.isNativePreviewCaptureEnabled() && nativePreviewWindow.isOpen();
+    }
+
+    private void startNativePreviewCapture(String deviceId) {
+        stopNativePreviewCapture();
+        if (!properties.isNativePreviewCaptureEnabled()) {
+            return;
+        }
+
+        int fps = Math.max(1, Math.min(30, properties.getNativePreviewCaptureFps()));
+        long periodMillis = Math.max(1, 1000L / fps);
+        ScheduledFuture<?> task = nativePreviewCaptureExecutor.scheduleAtFixedRate(
+                () -> captureNativePreviewFrame(deviceId),
+                0,
+                periodMillis,
+                TimeUnit.MILLISECONDS
+        );
+        nativePreviewCaptureTask.set(task);
+        nativePreviewCaptureFailureLogged.set(false);
+        log.info("Native preview capture started: deviceId={}, fps={}", deviceId, fps);
+    }
+
+    private void stopNativePreviewCapture() {
+        ScheduledFuture<?> task = nativePreviewCaptureTask.getAndSet(null);
+        if (task != null) {
+            task.cancel(true);
+            log.info("Native preview capture stopped.");
+        }
+    }
+
+    private void captureNativePreviewFrame(String deviceId) {
+        try {
+            byte[] bytes = nativePreviewWindow.captureJpeg();
+            if (bytes.length == 0) {
+                return;
+            }
+            lastPreview.set(new CapturedData(
+                    deviceId,
+                    BioBaseDataFormat.BIOB_JPG,
+                    false,
+                    0,
+                    0,
+                    bytes,
+                    null,
+                    Instant.now()
+            ));
+            writeNativePreviewFile(bytes);
+        } catch (Exception e) {
+            if (nativePreviewCaptureFailureLogged.compareAndSet(false, true)) {
+                log.warn("Native preview capture is not available: {}", e.getMessage());
+            }
+        }
+    }
+
+    private void writeNativePreviewFile(byte[] bytes) {
+        try {
+            Path outputDir = properties.getOutputDir();
+            Files.createDirectories(outputDir);
+            Path outputPath = outputDir.resolve("native-preview-live.jpg");
+            Files.write(outputPath, bytes);
+            if (nativePreviewFileLogged.compareAndSet(false, true)) {
+                log.info("Native preview live image is being updated at {}", outputPath.toAbsolutePath());
+            }
+        } catch (IOException e) {
+            if (nativePreviewCaptureFailureLogged.compareAndSet(false, true)) {
+                log.warn("Could not write native preview live image: {}", e.getMessage());
+            }
+        }
     }
 
     public Optional<CapturedData> lastPreview() {

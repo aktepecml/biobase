@@ -7,10 +7,17 @@ import java.awt.BorderLayout;
 import java.awt.Canvas;
 import java.awt.Color;
 import java.awt.Dimension;
+import java.awt.Graphics2D;
 import java.awt.GraphicsEnvironment;
+import java.awt.Point;
+import java.awt.Rectangle;
+import java.awt.Robot;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.util.Locale;
 import java.util.OptionalLong;
 import java.util.concurrent.atomic.AtomicReference;
+import javax.imageio.ImageIO;
 import javax.swing.JFrame;
 import javax.swing.SwingUtilities;
 import org.slf4j.Logger;
@@ -75,6 +82,40 @@ public class NativePreviewWindow {
         SwingUtilities.invokeLater(frame::dispose);
     }
 
+    public boolean isOpen() {
+        JFrame frame = frameRef.get();
+        Canvas canvas = canvasRef.get();
+        return frame != null && canvas != null && frame.isDisplayable() && canvas.isShowing();
+    }
+
+    public byte[] captureJpeg() {
+        Canvas canvas = canvasRef.get();
+        if (canvas == null || !canvas.isShowing()) {
+            return new byte[0];
+        }
+
+        try {
+            Rectangle bounds = canvasScreenBounds(canvas);
+            if (bounds.width <= 0 || bounds.height <= 0) {
+                return new byte[0];
+            }
+
+            BufferedImage capture = new Robot(canvas.getGraphicsConfiguration().getDevice()).createScreenCapture(bounds);
+            BufferedImage rgb = new BufferedImage(capture.getWidth(), capture.getHeight(), BufferedImage.TYPE_INT_RGB);
+            Graphics2D graphics = rgb.createGraphics();
+            try {
+                graphics.drawImage(capture, 0, 0, null);
+            } finally {
+                graphics.dispose();
+            }
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            ImageIO.write(rgb, "jpg", output);
+            return output.toByteArray();
+        } catch (Exception e) {
+            throw new BioBaseException("Native preview capture failed: " + e.getMessage());
+        }
+    }
+
     private long openOnEventThread(String title) {
         JFrame existingFrame = frameRef.get();
         Canvas existingCanvas = canvasRef.get();
@@ -114,6 +155,31 @@ public class NativePreviewWindow {
             throw new BioBaseException("Native preview window handle is 0.");
         }
         return handle;
+    }
+
+    private static Rectangle canvasScreenBounds(Canvas canvas) throws Exception {
+        if (SwingUtilities.isEventDispatchThread()) {
+            return readCanvasScreenBounds(canvas);
+        }
+
+        AtomicReference<Rectangle> boundsRef = new AtomicReference<>();
+        AtomicReference<RuntimeException> errorRef = new AtomicReference<>();
+        SwingUtilities.invokeAndWait(() -> {
+            try {
+                boundsRef.set(readCanvasScreenBounds(canvas));
+            } catch (RuntimeException e) {
+                errorRef.set(e);
+            }
+        });
+        if (errorRef.get() != null) {
+            throw errorRef.get();
+        }
+        return boundsRef.get();
+    }
+
+    private static Rectangle readCanvasScreenBounds(Canvas canvas) {
+        Point location = canvas.getLocationOnScreen();
+        return new Rectangle(location.x, location.y, canvas.getWidth(), canvas.getHeight());
     }
 
     private static boolean isWindows() {

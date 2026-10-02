@@ -36,6 +36,8 @@ public class FingerprintProperties {
     private boolean nativePreviewWindowEnabled = true;
     private int nativePreviewWindowWidth = 640;
     private int nativePreviewWindowHeight = 480;
+    private boolean nativePreviewCaptureEnabled = true;
+    private int nativePreviewCaptureFps = 15;
     private boolean captureSuccessBeepEnabled = true;
     private String captureSuccessBeepPattern = "3";
     private String captureSuccessBeepVolume = "100";
@@ -298,6 +300,22 @@ public class FingerprintProperties {
 
     public void setNativePreviewWindowHeight(int nativePreviewWindowHeight) {
         this.nativePreviewWindowHeight = nativePreviewWindowHeight;
+    }
+
+    public boolean isNativePreviewCaptureEnabled() {
+        return nativePreviewCaptureEnabled;
+    }
+
+    public void setNativePreviewCaptureEnabled(boolean nativePreviewCaptureEnabled) {
+        this.nativePreviewCaptureEnabled = nativePreviewCaptureEnabled;
+    }
+
+    public int getNativePreviewCaptureFps() {
+        return nativePreviewCaptureFps;
+    }
+
+    public void setNativePreviewCaptureFps(int nativePreviewCaptureFps) {
+        this.nativePreviewCaptureFps = nativePreviewCaptureFps;
     }
 
     public boolean isCaptureSuccessBeepEnabled() {

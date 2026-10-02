@@ -34,6 +34,7 @@ public class FingerprintProperties {
     private boolean consoleRunnerEnabled = true;
     private boolean consoleCloseWhenDone = false;
     private boolean nativePreviewWindowEnabled = true;
+    private boolean nativePreviewWindowVisible = false;
     private int nativePreviewWindowWidth = 640;
     private int nativePreviewWindowHeight = 480;
     private boolean nativePreviewCaptureEnabled = true;
@@ -284,6 +285,14 @@ public class FingerprintProperties {
 
     public void setNativePreviewWindowEnabled(boolean nativePreviewWindowEnabled) {
         this.nativePreviewWindowEnabled = nativePreviewWindowEnabled;
+    }
+
+    public boolean isNativePreviewWindowVisible() {
+        return nativePreviewWindowVisible;
+    }
+
+    public void setNativePreviewWindowVisible(boolean nativePreviewWindowVisible) {
+        this.nativePreviewWindowVisible = nativePreviewWindowVisible;
     }
 
     public int getNativePreviewWindowWidth() {

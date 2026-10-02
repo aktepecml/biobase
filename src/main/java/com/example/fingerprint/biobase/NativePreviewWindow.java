@@ -27,6 +27,8 @@ import org.springframework.stereotype.Component;
 @Component
 public class NativePreviewWindow {
     private static final Logger log = LoggerFactory.getLogger(NativePreviewWindow.class);
+    private static final int HIDDEN_WINDOW_X = -32000;
+    private static final int HIDDEN_WINDOW_Y = -32000;
 
     private final FingerprintProperties properties;
     private final AtomicReference<JFrame> frameRef = new AtomicReference<>();
@@ -132,18 +134,24 @@ public class NativePreviewWindow {
                 Math.max(120, properties.getNativePreviewWindowHeight())
         ));
 
+        boolean visibleWindow = properties.isNativePreviewWindowVisible();
+        frame.setUndecorated(!visibleWindow);
         frame.setLayout(new BorderLayout());
         frame.add(canvas, BorderLayout.CENTER);
         frame.pack();
-        frame.setLocationByPlatform(true);
+        if (visibleWindow) {
+            frame.setLocationByPlatform(true);
+        } else {
+            frame.setLocation(HIDDEN_WINDOW_X, HIDDEN_WINDOW_Y);
+        }
         frame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
         frame.setVisible(true);
 
         long handle = componentHandle(canvas);
         frameRef.set(frame);
         canvasRef.set(canvas);
-        log.info("Native preview window opened: handle=0x{}, size={}x{}",
-                Long.toHexString(handle), canvas.getWidth(), canvas.getHeight());
+        log.info("Native preview window opened: handle=0x{}, size={}x{}, visible={}",
+                Long.toHexString(handle), canvas.getWidth(), canvas.getHeight(), visibleWindow);
         return handle;
     }
 

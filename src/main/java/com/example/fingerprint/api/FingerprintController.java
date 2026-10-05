@@ -89,6 +89,40 @@ public class FingerprintController {
         return new ApiMessage("Device LED clear command sent.");
     }
 
+    @PostMapping("/devices/{deviceId}/display/logo")
+    public ApiMessage showDisplayLogo(
+            @PathVariable String deviceId,
+            @RequestParam(defaultValue = "0") int progressPercent
+    ) {
+        service.showLScan1000Logo(deviceId, progressPercent);
+        return new ApiMessage("LScan1000 display logo command sent.");
+    }
+
+    @PostMapping("/devices/{deviceId}/display/clear")
+    public ApiMessage clearDisplay(@PathVariable String deviceId) {
+        service.clearLScan1000Display(deviceId);
+        return new ApiMessage("LScan1000 display clear command sent.");
+    }
+
+    @PostMapping("/devices/{deviceId}/display/capture-progress")
+    public ApiMessage showDisplayCaptureProgress(
+            @PathVariable String deviceId,
+            @RequestParam(required = false) String position,
+            @RequestParam(required = false) String impression
+    ) {
+        service.showLScan1000CaptureProgress(deviceId, position, impression);
+        return new ApiMessage("LScan1000 display capture progress command sent.");
+    }
+
+    @PostMapping("/devices/{deviceId}/display/status")
+    public ApiMessage setDisplayStatus(
+            @PathVariable String deviceId,
+            @RequestParam(defaultValue = "ERASE") String status
+    ) {
+        service.setLScan1000DisplayStatus(deviceId, status);
+        return new ApiMessage("LScan1000 display status command sent: " + status);
+    }
+
     @PostMapping("/devices/{deviceId}/visualization/window")
     public ApiMessage setVisualizationWindow(@PathVariable String deviceId, @RequestParam String windowHandle) {
         service.setVisualizationWindow(deviceId, windowHandle);

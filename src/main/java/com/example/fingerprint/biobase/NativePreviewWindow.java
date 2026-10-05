@@ -3,6 +3,8 @@ package com.example.fingerprint.biobase;
 import com.example.fingerprint.config.FingerprintProperties;
 import com.sun.jna.Native;
 import com.sun.jna.Pointer;
+import com.sun.jna.platform.win32.GDI32Util;
+import com.sun.jna.platform.win32.WinDef;
 import java.awt.BorderLayout;
 import java.awt.Canvas;
 import java.awt.Color;
@@ -97,12 +99,11 @@ public class NativePreviewWindow {
         }
 
         try {
-            Rectangle bounds = canvasScreenBounds(canvas);
-            if (bounds.width <= 0 || bounds.height <= 0) {
+            BufferedImage capture = captureCanvasImage(canvas);
+            if (capture == null || capture.getWidth() <= 0 || capture.getHeight() <= 0) {
                 return new byte[0];
             }
 
-            BufferedImage capture = new Robot(canvas.getGraphicsConfiguration().getDevice()).createScreenCapture(bounds);
             BufferedImage rgb = new BufferedImage(capture.getWidth(), capture.getHeight(), BufferedImage.TYPE_INT_RGB);
             Graphics2D graphics = rgb.createGraphics();
             try {
@@ -116,6 +117,28 @@ public class NativePreviewWindow {
         } catch (Exception e) {
             throw new BioBaseException("Native preview capture failed: " + e.getMessage());
         }
+    }
+
+    private BufferedImage captureCanvasImage(Canvas canvas) throws Exception {
+        try {
+            return captureCanvasImageWithGdi(canvas);
+        } catch (Exception e) {
+            log.debug("GDI native preview capture failed, falling back to Robot: {}", e.getMessage());
+            return captureCanvasImageWithRobot(canvas);
+        }
+    }
+
+    private static BufferedImage captureCanvasImageWithGdi(Canvas canvas) {
+        long handle = componentHandle(canvas);
+        return GDI32Util.getScreenshot(new WinDef.HWND(Pointer.createConstant(handle)));
+    }
+
+    private static BufferedImage captureCanvasImageWithRobot(Canvas canvas) throws Exception {
+        Rectangle bounds = canvasScreenBounds(canvas);
+        if (bounds.width <= 0 || bounds.height <= 0) {
+            return null;
+        }
+        return new Robot(canvas.getGraphicsConfiguration().getDevice()).createScreenCapture(bounds);
     }
 
     private long openOnEventThread(String title) {

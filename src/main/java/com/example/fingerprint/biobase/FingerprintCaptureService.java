@@ -20,7 +20,9 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
@@ -83,6 +85,33 @@ public class FingerprintCaptureService {
     private static final String PROP_DEVICE_AVAILABLE_LEDS = "DEVICE_AVAILABLE_LEDS";
     private static final String PROP_LED_TYPE_NONE = "LED_TYPE_NONE";
     private static final String LED_NONE = "NONE";
+    private static final String TFT_CAP_SCREEN = "CaptureProgressScreen";
+    private static final String TFT_LOGO_SCREEN = "LogoScreen";
+    private static final String TFT_INACTIVE = "INACTIVE";
+    private static final String TFT_AUTOCAPTURE_OK = "AUTOCAPTURE_OK";
+    private static final String TFT_MISSING = "MISSING";
+    private static final String TFT_LEAVE_UNCHANGED = "LEAVE_UNCHANGED";
+    private static final String TFT_ERASE = "ERASE";
+    private static final List<String> TFT_SEGMENTS = List.of(
+            "ColorLeftPalm",
+            "ColorLeftThenar",
+            "ColorLeftLowerThenar",
+            "ColorLeftInterDigital",
+            "ColorLeftThumb",
+            "ColorLeftIndex",
+            "ColorLeftMiddle",
+            "ColorLeftRing",
+            "ColorLeftSmall",
+            "ColorRightPalm",
+            "ColorRightThenar",
+            "ColorRightLowerThenar",
+            "ColorRightInterDigital",
+            "ColorRightThumb",
+            "ColorRightIndex",
+            "ColorRightMiddle",
+            "ColorRightRing",
+            "ColorRightSmall"
+    );
 
     private final BioBaseClient client;
     private final FingerprintProperties properties;
@@ -106,6 +135,7 @@ public class FingerprintCaptureService {
     private final AtomicReference<String> activeImpression = new AtomicReference<>();
     private final AtomicReference<String> activePosition = new AtomicReference<>();
     private final AtomicReference<List<String>> lastQualityLedState = new AtomicReference<>(List.of());
+    private final AtomicReference<String> lastTftStatus = new AtomicReference<>("");
     private final AtomicBoolean previewSeenLogged = new AtomicBoolean(false);
     private final AtomicBoolean captureSuccessBeepSent = new AtomicBoolean(false);
     private final AtomicBoolean captureProgressBeepSent = new AtomicBoolean(false);
@@ -197,6 +227,7 @@ public class FingerprintCaptureService {
             if (!previous.equals(states)) {
                 log.debug("Object quality changed: {}", toQualityLog(states));
                 enqueueLiveQualityLeds(deviceId, states);
+                enqueueLiveTftStatus(deviceId, states);
             }
         };
         this.objectCountCallback = (deviceId, context, objectCountState) -> {
@@ -270,6 +301,7 @@ public class FingerprintCaptureService {
             String effectivePosition = blankToDefault(position, properties.getDefaultPosition());
             activePosition.set(effectivePosition);
             enqueueCaptureStartLed(deviceId, effectivePosition);
+            enqueueTftCaptureProgress(deviceId, effectivePosition, effectiveImpression);
             client.beginAcquisition(
                     deviceId,
                     effectivePosition,
@@ -378,6 +410,36 @@ public class FingerprintCaptureService {
 
     public void clearStatusLeds(String requestedDeviceId) {
         sendStatusLed(resolveDeviceId(requestedDeviceId), LED_NONE, "manual clear");
+    }
+
+    public void showLScan1000Logo(String requestedDeviceId, int progressPercent) {
+        String deviceId = resolveDeviceId(requestedDeviceId);
+        requireLScan1000(deviceId);
+        String percent = Integer.toString(Math.max(0, Math.min(100, progressPercent)));
+        String xml = outputXml("<Tft><" + TFT_LOGO_SCREEN + ">"
+                + element("Option", "SHOW_FW_VERSION")
+                + element("ProgressBarPercent", percent)
+                + "</" + TFT_LOGO_SCREEN + "></Tft>");
+        client.setOutputXml(deviceId, xml);
+        log.info("LScan1000 display logo sent: deviceId={}, progress={}", deviceId, percent);
+    }
+
+    public void clearLScan1000Display(String requestedDeviceId) {
+        showLScan1000Logo(requestedDeviceId, 0);
+    }
+
+    public void showLScan1000CaptureProgress(String requestedDeviceId, String position, String impression) {
+        String deviceId = resolveDeviceId(requestedDeviceId);
+        requireLScan1000(deviceId);
+        String effectivePosition = blankToDefault(position, properties.getDefaultPosition());
+        String effectiveImpression = blankToDefault(impression, properties.getDefaultImpression());
+        sendTftCaptureProgress(deviceId, effectivePosition, effectiveImpression, TFT_ERASE, true);
+    }
+
+    public void setLScan1000DisplayStatus(String requestedDeviceId, String status) {
+        String deviceId = resolveDeviceId(requestedDeviceId);
+        requireLScan1000(deviceId);
+        sendTftCaptureProgress(deviceId, activePosition.get(), activeImpression.get(), blankToDefault(status, TFT_ERASE), false);
     }
 
     public void setVisualizationWindow(String requestedDeviceId, String windowHandle) {
@@ -1805,7 +1867,7 @@ public class FingerprintCaptureService {
     }
 
     private void enqueueCaptureStartLed(String deviceId, String position) {
-        if (!properties.isLedEnabled()) {
+        if (!properties.isLedEnabled() || isLScan1000Device(deviceId)) {
             return;
         }
         if (properties.isCaptureClearLedsOnStart()) {
@@ -1815,21 +1877,21 @@ public class FingerprintCaptureService {
     }
 
     private void enqueueCaptureSuccessLed(String deviceId) {
-        if (properties.isLedEnabled()) {
+        if (properties.isLedEnabled() && !isLScan1000Device(deviceId)) {
             enqueueStatusLeds(deviceId, parseLedSpec(properties.getCaptureSuccessLed()), "capture success", 0,
                     properties.getCaptureResultLedDurationMillis());
         }
     }
 
     private void enqueueCaptureFailureLed(String deviceId) {
-        if (properties.isLedEnabled()) {
+        if (properties.isLedEnabled() && !isLScan1000Device(deviceId)) {
             enqueueStatusLeds(deviceId, parseLedSpec(properties.getCaptureFailureLed()), "capture failure", 0,
                     properties.getCaptureResultLedDurationMillis());
         }
     }
 
     private void enqueueLiveQualityLeds(String deviceId, List<Integer> qualityStates) {
-        if (!properties.isLedEnabled() || !properties.isLiveQualityLedEnabled()) {
+        if (!properties.isLedEnabled() || !properties.isLiveQualityLedEnabled() || isLScan1000Device(deviceId)) {
             return;
         }
         if (pendingCapture.get() == null) {
@@ -1845,6 +1907,37 @@ public class FingerprintCaptureService {
             return;
         }
         enqueueStatusLeds(deviceId, leds, "live quality", 0, 0);
+    }
+
+    private void enqueueTftCaptureProgress(String deviceId, String position, String impression) {
+        if (!isLScan1000Device(deviceId)) {
+            return;
+        }
+        deviceOutputExecutor.execute(() -> {
+            try {
+                sendTftCaptureProgress(deviceId, position, impression, TFT_ERASE, true);
+            } catch (BioBaseException e) {
+                log.warn("Could not initialize LScan1000 display: {}", e.getMessage());
+            }
+        });
+    }
+
+    private void enqueueLiveTftStatus(String deviceId, List<Integer> qualityStates) {
+        if (!isLScan1000Device(deviceId) || pendingCapture.get() == null) {
+            return;
+        }
+        String status = tftStatusFromQualityStates(qualityStates);
+        String previous = lastTftStatus.getAndSet(status);
+        if (Objects.equals(previous, status)) {
+            return;
+        }
+        deviceOutputExecutor.execute(() -> {
+            try {
+                sendTftCaptureProgress(deviceId, activePosition.get(), activeImpression.get(), status, false);
+            } catch (BioBaseException e) {
+                log.warn("Could not update LScan1000 display status: {}", e.getMessage());
+            }
+        });
     }
 
     private void enqueueStatusLed(String deviceId, String led, String reason, long delayMillis, long durationMillis) {
@@ -1904,6 +1997,182 @@ public class FingerprintCaptureService {
         } catch (BioBaseException e) {
             log.warn("Could not send {} LEDs {}: {}", reason, normalizedLeds, e.getMessage());
         }
+    }
+
+    private void sendTftCaptureProgress(String deviceId, String position, String impression, String bottomStatus, boolean initializeSegments) {
+        Map<String, String> values = initializeSegments
+                ? tftCaptureSegments(position)
+                : tftLeaveSegmentsUnchanged();
+        values.put("LeftButton", initializeSegments ? TFT_ERASE : TFT_LEAVE_UNCHANGED);
+        values.put("RightButton", initializeSegments ? TFT_ERASE : TFT_LEAVE_UNCHANGED);
+        values.put("StatTop", initializeSegments ? tftTopStatus(impression, position) : TFT_LEAVE_UNCHANGED);
+        values.put("StatBottom", blankToDefault(bottomStatus, TFT_ERASE));
+
+        StringBuilder screen = new StringBuilder();
+        screen.append("<Tft><").append(TFT_CAP_SCREEN).append(">");
+        values.forEach((key, value) -> screen.append(element(key, value)));
+        screen.append("</").append(TFT_CAP_SCREEN).append("></Tft>");
+
+        client.setOutputXml(deviceId, outputXml(screen.toString()));
+        log.info("LScan1000 display capture progress sent: deviceId={}, position={}, impression={}, status={}, initialize={}",
+                deviceId, position, impression, bottomStatus, initializeSegments);
+    }
+
+    private Map<String, String> tftCaptureSegments(String position) {
+        LinkedHashMap<String, String> values = new LinkedHashMap<>();
+        for (String segment : TFT_SEGMENTS) {
+            values.put(segment, TFT_INACTIVE);
+        }
+
+        String normalized = normalizeModeText(position);
+        if (normalized.contains("boththumb")) {
+            values.put("ColorRightThumb", TFT_AUTOCAPTURE_OK);
+            values.put("ColorLeftThumb", TFT_AUTOCAPTURE_OK);
+        } else if (normalized.contains("rightfour")) {
+            values.put("ColorRightIndex", TFT_AUTOCAPTURE_OK);
+            values.put("ColorRightMiddle", TFT_AUTOCAPTURE_OK);
+            values.put("ColorRightRing", TFT_AUTOCAPTURE_OK);
+            values.put("ColorRightSmall", TFT_AUTOCAPTURE_OK);
+        } else if (normalized.contains("leftfour")) {
+            values.put("ColorLeftIndex", TFT_AUTOCAPTURE_OK);
+            values.put("ColorLeftMiddle", TFT_AUTOCAPTURE_OK);
+            values.put("ColorLeftRing", TFT_AUTOCAPTURE_OK);
+            values.put("ColorLeftSmall", TFT_AUTOCAPTURE_OK);
+        } else if (normalized.contains("rightlowerpalm")) {
+            values.put("ColorRightPalm", TFT_AUTOCAPTURE_OK);
+            values.put("ColorRightLowerThenar", TFT_MISSING);
+        } else if (normalized.contains("leftlowerpalm")) {
+            values.put("ColorLeftPalm", TFT_AUTOCAPTURE_OK);
+            values.put("ColorLeftLowerThenar", TFT_MISSING);
+        } else if (normalized.contains("rightupperpalm")) {
+            values.put("ColorRightIndex", TFT_AUTOCAPTURE_OK);
+            values.put("ColorRightMiddle", TFT_AUTOCAPTURE_OK);
+            values.put("ColorRightRing", TFT_AUTOCAPTURE_OK);
+            values.put("ColorRightSmall", TFT_AUTOCAPTURE_OK);
+            values.put("ColorRightInterDigital", TFT_AUTOCAPTURE_OK);
+        } else if (normalized.contains("leftupperpalm")) {
+            values.put("ColorLeftIndex", TFT_AUTOCAPTURE_OK);
+            values.put("ColorLeftMiddle", TFT_AUTOCAPTURE_OK);
+            values.put("ColorLeftRing", TFT_AUTOCAPTURE_OK);
+            values.put("ColorLeftSmall", TFT_AUTOCAPTURE_OK);
+            values.put("ColorLeftInterDigital", TFT_AUTOCAPTURE_OK);
+        } else if (normalized.contains("rightthumb")) {
+            values.put("ColorRightThumb", TFT_AUTOCAPTURE_OK);
+        } else if (normalized.contains("leftthumb")) {
+            values.put("ColorLeftThumb", TFT_AUTOCAPTURE_OK);
+        } else if (normalized.contains("rightindex")) {
+            values.put("ColorRightIndex", TFT_AUTOCAPTURE_OK);
+        } else if (normalized.contains("rightmiddle")) {
+            values.put("ColorRightMiddle", TFT_AUTOCAPTURE_OK);
+        } else if (normalized.contains("rightring")) {
+            values.put("ColorRightRing", TFT_AUTOCAPTURE_OK);
+        } else if (normalized.contains("rightlittle") || normalized.contains("rightsmall")) {
+            values.put("ColorRightSmall", TFT_AUTOCAPTURE_OK);
+        } else if (normalized.contains("leftindex")) {
+            values.put("ColorLeftIndex", TFT_AUTOCAPTURE_OK);
+        } else if (normalized.contains("leftmiddle")) {
+            values.put("ColorLeftMiddle", TFT_AUTOCAPTURE_OK);
+        } else if (normalized.contains("leftring")) {
+            values.put("ColorLeftRing", TFT_AUTOCAPTURE_OK);
+        } else if (normalized.contains("leftlittle") || normalized.contains("leftsmall")) {
+            values.put("ColorLeftSmall", TFT_AUTOCAPTURE_OK);
+        }
+        return values;
+    }
+
+    private Map<String, String> tftLeaveSegmentsUnchanged() {
+        LinkedHashMap<String, String> values = new LinkedHashMap<>();
+        for (String segment : TFT_SEGMENTS) {
+            values.put(segment, TFT_LEAVE_UNCHANGED);
+        }
+        return values;
+    }
+
+    private static String tftTopStatus(String impression, String position) {
+        if (!isRollImpression(impression)) {
+            return "CAPTURE_FLAT";
+        }
+        String normalized = normalizeModeText(position);
+        if (normalized.contains("left")) {
+            return "ROLL_HORIZONTAL_LEFT";
+        }
+        if (normalized.contains("right")) {
+            return "ROLL_HORIZONTAL_RIGHT";
+        }
+        return "ROLL_HORIZONTAL";
+    }
+
+    private static String tftStatusFromQualityStates(List<Integer> qualityStates) {
+        if (qualityStates == null || qualityStates.isEmpty()) {
+            return TFT_ERASE;
+        }
+        boolean tooHigh = false;
+        boolean tooLow = false;
+        boolean tooLeft = false;
+        boolean tooRight = false;
+        boolean notOk = false;
+        for (Integer value : qualityStates) {
+            BioBaseObjectQualityState state = BioBaseObjectQualityState.fromValue(value);
+            switch (state) {
+                case BIOB_OBJECT_GOOD -> {
+                }
+                case BIOB_OBJECT_POSITION_TOO_HIGH, BIOB_OBJECT_FLEX_POSITION_TOO_HIGH -> tooHigh = true;
+                case BIOB_OBJECT_POSITION_TOO_LOW, BIOB_OBJECT_FLEX_POSITION_TOO_LOW -> tooLow = true;
+                case BIOB_OBJECT_POSITION_TOO_LEFT, BIOB_OBJECT_FLEX_POSITION_TOO_LEFT -> tooLeft = true;
+                case BIOB_OBJECT_POSITION_TOO_RIGHT, BIOB_OBJECT_FLEX_POSITION_TOO_RIGHT -> tooRight = true;
+                case BIOB_OBJECT_NOT_PRESENT, UNKNOWN -> {
+                }
+                default -> notOk = true;
+            }
+        }
+        if (notOk) {
+            return "COMMON_ERROR";
+        }
+        if ((tooHigh && tooLeft && tooRight) || (tooLow && tooLeft && tooRight)) {
+            return "POSITION_DOWN_LEFT_RIGHT_UP";
+        }
+        if (tooHigh && tooLeft) {
+            return "POSITION_DOWN_RIGHT";
+        }
+        if (tooHigh && tooRight) {
+            return "POSITION_DOWN_LEFT";
+        }
+        if (tooLow && tooLeft) {
+            return "POSITION_UP_RIGHT";
+        }
+        if (tooLow && tooRight) {
+            return "POSITION_UP_LEFT";
+        }
+        if (tooRight && tooLeft) {
+            return "POSITION_LEFT_RIGHT";
+        }
+        if (tooRight) {
+            return "POSITION_LEFT";
+        }
+        if (tooLeft) {
+            return "POSITION_RIGHT";
+        }
+        if (tooHigh) {
+            return "POSITION_DOWN";
+        }
+        if (tooLow) {
+            return "POSITION_UP";
+        }
+        return TFT_ERASE;
+    }
+
+    private void requireLScan1000(String deviceId) {
+        if (!isLScan1000Device(deviceId)) {
+            throw new BioBaseException("Device is not an LScan1000-family device: " + deviceId);
+        }
+    }
+
+    private boolean isLScan1000Device(String deviceId) {
+        return devices().stream()
+                .filter(device -> Objects.equals(device.deviceId(), deviceId))
+                .map(DeviceInfo::modelName)
+                .map(FingerprintCaptureService::normalizeModeText)
+                .anyMatch(model -> model.contains("lscan1000") || model.contains("lscan1000p") || model.contains("lscan1000px") || model.contains("lscan1000t"));
     }
 
     private List<String> captureStartLeds(String position) {
@@ -2057,6 +2326,21 @@ public class FingerprintCaptureService {
                 .replace(">", "&gt;");
     }
 
+    private static String outputXml(String outputBody) {
+        return "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+                + "<BioBase Version=\"4.0\" "
+                + "xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" "
+                + "xsi:noNamespaceSchemaLocation=\"BioBase.xsd\">"
+                + "<OutputData>"
+                + outputBody
+                + "</OutputData>"
+                + "</BioBase>";
+    }
+
+    private static String element(String name, String text) {
+        return "<" + name + ">" + escapeXmlText(text) + "</" + name + ">";
+    }
+
     private static String escapeXmlText(String value) {
         if (value == null) {
             return "";
@@ -2065,6 +2349,13 @@ public class FingerprintCaptureService {
                 .replace("&", "&amp;")
                 .replace("<", "&lt;")
                 .replace(">", "&gt;");
+    }
+
+    private static String normalizeModeText(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value.toLowerCase(java.util.Locale.ROOT).replaceAll("[^a-z0-9]", "");
     }
 
     private static String pointerString(Pointer pointer) {

@@ -206,6 +206,7 @@ public class FingerprintCaptureService {
                 if (capture.bytes().length > 0) {
                     log.info("Capture data received: format={}, bytes={}, detectedObjects={}", capture.format(), capture.bytes().length, capture.detectedObjects());
                     lastCapture.set(capture);
+                    enqueueFinalTftStatus(deviceId, dataStatus);
                     CompletableFuture<CapturedData> future = pendingCapture.get();
                     if (future != null) {
                         future.complete(capture);
@@ -1940,6 +1941,21 @@ public class FingerprintCaptureService {
         });
     }
 
+    private void enqueueFinalTftStatus(String deviceId, int dataStatus) {
+        if (!isLScan1000Device(deviceId)) {
+            return;
+        }
+        String status = tftFinalStatus(dataStatus, activeImpression.get());
+        lastTftStatus.set(status);
+        deviceOutputExecutor.execute(() -> {
+            try {
+                sendTftCaptureProgress(deviceId, activePosition.get(), activeImpression.get(), status, false);
+            } catch (BioBaseException e) {
+                log.warn("Could not update LScan1000 final display status: {}", e.getMessage());
+            }
+        });
+    }
+
     private void enqueueStatusLed(String deviceId, String led, String reason, long delayMillis, long durationMillis) {
         enqueueStatusLeds(deviceId, parseLedSpec(led), reason, delayMillis, durationMillis);
     }
@@ -2161,6 +2177,19 @@ public class FingerprintCaptureService {
         return TFT_ERASE;
     }
 
+    private static String tftFinalStatus(int dataStatus, String impression) {
+        if (dataStatus == 0) {
+            return "OK";
+        }
+        if (isRollImpression(impression)) {
+            return "ROLL_ERROR";
+        }
+        return switch (dataStatus) {
+            case -1, -2, -3 -> "CAPTURE_ERROR";
+            default -> "COMMON_ERROR";
+        };
+    }
+
     private void requireLScan1000(String deviceId) {
         if (!isLScan1000Device(deviceId)) {
             throw new BioBaseException("Device is not an LScan1000-family device: " + deviceId);
@@ -2168,6 +2197,12 @@ public class FingerprintCaptureService {
     }
 
     private boolean isLScan1000Device(String deviceId) {
+        Optional<String> ledType = getOptionalProperty(deviceId, PROP_DEVICE_LED_TYPE);
+        if (ledType.map(FingerprintCaptureService::normalizeModeText)
+                .map(type -> type.contains("ledtypelscandisplayemulation"))
+                .orElse(false)) {
+            return true;
+        }
         return devices().stream()
                 .filter(device -> Objects.equals(device.deviceId(), deviceId))
                 .map(DeviceInfo::modelName)

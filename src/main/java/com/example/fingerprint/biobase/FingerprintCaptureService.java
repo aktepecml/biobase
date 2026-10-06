@@ -2141,9 +2141,9 @@ public class FingerprintCaptureService {
                 default -> notOk = true;
             }
         }
-        if (notOk) {
+        /*f (notOk) {
             return "COMMON_ERROR";
-        }
+        }*/
         if ((tooHigh && tooLeft && tooRight) || (tooLow && tooLeft && tooRight)) {
             return "POSITION_DOWN_LEFT_RIGHT_UP";
         }

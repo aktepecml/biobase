@@ -132,7 +132,7 @@ public class FingerprintController {
     @PostMapping("/capture")
     public CaptureResponse capture(@RequestBody(required = false) CaptureRequest request) {
         CaptureRequest body = request == null ? new CaptureRequest(null, null, null, null) : request;
-        return service.capture(body.deviceId(), body.position(), body.impression(), body.timeoutSeconds());
+        return service.capture(body.deviceId(), body.position(), body.impression(), body.timeoutSeconds(), body.missingFingers());
     }
 
     @PostMapping("/devices/{deviceId}/capture")
@@ -140,9 +140,10 @@ public class FingerprintController {
             @PathVariable String deviceId,
             @RequestParam(required = false) String position,
             @RequestParam(required = false) String impression,
-            @RequestParam(required = false) Long timeoutSeconds
+            @RequestParam(required = false) Long timeoutSeconds,
+            @RequestParam(required = false) List<String> missingFingers
     ) {
-        return service.capture(deviceId, position, impression, timeoutSeconds);
+        return service.capture(deviceId, position, impression, timeoutSeconds, missingFingers);
     }
 
     @PostMapping("/devices/{deviceId}/capture/cancel")

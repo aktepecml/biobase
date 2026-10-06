@@ -136,6 +136,7 @@ public class FingerprintCaptureService {
     private final AtomicReference<String> activePosition = new AtomicReference<>();
     private final AtomicReference<List<String>> lastQualityLedState = new AtomicReference<>(List.of());
     private final AtomicReference<String> lastTftStatus = new AtomicReference<>("");
+    private final AtomicReference<List<String>> activeMissingFingers = new AtomicReference<>(List.of());
     private final AtomicBoolean previewSeenLogged = new AtomicBoolean(false);
     private final AtomicBoolean captureSuccessBeepSent = new AtomicBoolean(false);
     private final AtomicBoolean captureProgressBeepSent = new AtomicBoolean(false);
@@ -283,6 +284,11 @@ public class FingerprintCaptureService {
     }
 
     public synchronized CaptureResponse capture(String requestedDeviceId, String position, String impression, Long timeoutSeconds) {
+        return capture(requestedDeviceId, position, impression, timeoutSeconds, List.of());
+    }
+
+    public synchronized CaptureResponse capture(String requestedDeviceId, String position, String impression, Long timeoutSeconds,
+            List<String> missingFingers) {
         String deviceId = resolveDeviceId(requestedDeviceId);
         if (!client.isDeviceReady(deviceId)) {
             throw new BioBaseException("Device is not ready. Open the device first.");
@@ -294,6 +300,7 @@ public class FingerprintCaptureService {
         }
 
         try {
+            activeMissingFingers.set(validateMissingFingers(missingFingers));
             clearLiveObjectState();
             resetPreviewState();
             String effectiveImpression = blankToDefault(impression, properties.getDefaultImpression());
@@ -2097,6 +2104,12 @@ public class FingerprintCaptureService {
         } else if (normalized.contains("leftlittle") || normalized.contains("leftsmall")) {
             values.put("ColorLeftSmall", TFT_AUTOCAPTURE_OK);
         }
+        for (String missingFinger : activeMissingFingers.get()) {
+            String segment = missingFingerSegment(missingFinger);
+            if (TFT_AUTOCAPTURE_OK.equals(values.get(segment))) {
+                values.put(segment, TFT_MISSING);
+            }
+        }
         return values;
     }
 
@@ -2106,6 +2119,34 @@ public class FingerprintCaptureService {
             values.put(segment, TFT_LEAVE_UNCHANGED);
         }
         return values;
+    }
+
+    private static List<String> validateMissingFingers(List<String> fingers) {
+        if (fingers == null) {
+            return List.of();
+        }
+        for (String finger : fingers) {
+            if (missingFingerSegment(finger) == null) {
+                throw new BioBaseException("Invalid missing finger position: " + finger);
+            }
+        }
+        return List.copyOf(fingers);
+    }
+
+    private static String missingFingerSegment(String finger) {
+        return switch (normalizeModeText(finger)) {
+            case "rightthumb" -> "ColorRightThumb";
+            case "rightindex" -> "ColorRightIndex";
+            case "rightmiddle" -> "ColorRightMiddle";
+            case "rightring" -> "ColorRightRing";
+            case "rightlittle", "rightsmall" -> "ColorRightSmall";
+            case "leftthumb" -> "ColorLeftThumb";
+            case "leftindex" -> "ColorLeftIndex";
+            case "leftmiddle" -> "ColorLeftMiddle";
+            case "leftring" -> "ColorLeftRing";
+            case "leftlittle", "leftsmall" -> "ColorLeftSmall";
+            default -> null;
+        };
     }
 
     private static String tftTopStatus(String impression, String position) {

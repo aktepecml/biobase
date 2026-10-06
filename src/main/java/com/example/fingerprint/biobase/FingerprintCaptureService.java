@@ -2054,6 +2054,10 @@ public class FingerprintCaptureService {
             values.put("ColorLeftMiddle", TFT_AUTOCAPTURE_OK);
             values.put("ColorLeftRing", TFT_AUTOCAPTURE_OK);
             values.put("ColorLeftSmall", TFT_AUTOCAPTURE_OK);
+        } else if (normalized.contains("rightwriterspalm")) {
+            values.put("ColorRightThenar", TFT_AUTOCAPTURE_OK);
+        } else if (normalized.contains("leftwriterspalm")) {
+            values.put("ColorLeftThenar", TFT_AUTOCAPTURE_OK);
         } else if (normalized.contains("rightlowerpalm")) {
             values.put("ColorRightPalm", TFT_AUTOCAPTURE_OK);
             values.put("ColorRightLowerThenar", TFT_MISSING);

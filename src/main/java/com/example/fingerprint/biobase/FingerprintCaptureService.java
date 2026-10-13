@@ -929,84 +929,40 @@ public class FingerprintCaptureService {
     }
 
     private BufferedImage centerCrop(BufferedImage image) {
-        int targetW = 1600;
-        int targetH = 1500;
-
         int width = image.getWidth();
         int height = image.getHeight();
-
-        // Görüntü zaten hedef boyutta veya küçükse dokunma
-        if (width <= targetW && height <= targetH) {
-            return image;
-        }
-
-        // 1) Koyu piksel haritası ve sütun/satır dolulukları
-        int threshold = otsuThreshold(image);
-        int[] columnCounts = new int[width];
-        int[] rowCounts = new int[height];
+        // Include faint ridges conservatively; only trim near-white background.
+        int threshold = Math.min(245, Math.max(220, otsuThreshold(image)));
+        int minX = width;
+        int maxX = -1;
+        int minY = height;
+        int maxY = -1;
 
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
                 if (luminance(image.getRGB(x, y)) <= threshold) {
-                    columnCounts[x]++;
-                    rowCounts[y]++;
+                    minX = Math.min(minX, x);
+                    maxX = Math.max(maxX, x);
+                    minY = Math.min(minY, y);
+                    maxY = Math.max(maxY, y);
                 }
             }
         }
 
-        // 2) Yumuşat
-        int[] smoothedCols = smooth(columnCounts, Math.max(2, width / 250));
-        int[] smoothedRows = smooth(rowCounts, Math.max(2, height / 250));
-
-        // 3) Aktiflik eşikleri
-        int colThreshold = Math.max(8, height / 120);
-        int rowThreshold = Math.max(8, width / 120);
-
-        // 4) İçeriğin yatay sınırları
-        int minX = -1;
-        int maxX = -1;
-        for (int x = 0; x < width; x++) {
-            if (smoothedCols[x] >= colThreshold) {
-                if (minX == -1) {
-                    minX = x;
-                }
-                maxX = x;
-            }
+        if (maxX < 0 || maxY < 0) {
+            return image;
         }
 
-        // 5) İçeriğin dikey sınırları
-        int minY = -1;
-        int maxY = -1;
-        for (int y = 0; y < height; y++) {
-            if (smoothedRows[y] >= rowThreshold) {
-                if (minY == -1) {
-                    minY = y;
-                }
-                maxY = y;
-            }
+        int marginX = Math.max(20, (maxX - minX + 1) / 50);
+        int marginY = Math.max(20, (maxY - minY + 1) / 50);
+        int cropX = Math.max(0, minX - marginX);
+        int cropY = Math.max(0, minY - marginY);
+        int cropW = Math.min(width - 1, maxX + marginX) - cropX + 1;
+        int cropH = Math.min(height - 1, maxY + marginY) - cropY + 1;
+        if (cropW == width && cropH == height) {
+            return image;
         }
 
-        // İçerik bulunamazsa: görüntüyü ortadan kırp
-        if (minX == -1 || minY == -1) {
-            minX = 0;
-            maxX = width - 1;
-            minY = 0;
-            maxY = height - 1;
-        }
-
-        // 6) Kırpma penceresi: içerik ortada kalacak şekilde
-        int cropW = Math.min(targetW, width);
-        int cropH = Math.min(targetH, height);
-
-        int centerX = (minX + maxX) / 2;
-        int cropX = centerX - cropW / 2;
-        cropX = Math.max(0, Math.min(cropX, width - cropW));
-
-        int centerY = (minY + maxY) / 2;
-        int cropY = centerY - cropH / 2;
-        cropY = Math.max(0, Math.min(cropY, height - cropH));
-
-        // 7) Kırpılmış görüntüyü oluştur
         BufferedImage cropped = new BufferedImage(cropW, cropH, BufferedImage.TYPE_INT_RGB);
         for (int y = 0; y < cropH; y++) {
             for (int x = 0; x < cropW; x++) {

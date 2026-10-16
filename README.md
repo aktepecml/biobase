@@ -92,6 +92,7 @@ set edilir. `application.properties` uzerinden degistirebilirsin:
 fingerprint.auto-capture-enabled=true
 fingerprint.auto-capture-required-objects=4
 fingerprint.auto-contrast-enabled=true
+fingerprint.perfect-image-enabled=true
 fingerprint.image-resolution=500
 fingerprint.active-area=0 0 0 0
 fingerprint.spoof-detection-enabled=false

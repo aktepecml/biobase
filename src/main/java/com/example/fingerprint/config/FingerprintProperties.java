@@ -12,6 +12,7 @@ public class FingerprintProperties {
     private boolean autoCaptureEnabled = true;
     private int autoCaptureRequiredObjects = 2;
     private boolean autoContrastEnabled = true;
+    private boolean perfectImageEnabled = true;
     private String imageResolution = "500";
     private String activeArea = "0 0 0 0";
     private boolean spoofDetectionEnabled = false;
@@ -113,6 +114,14 @@ public class FingerprintProperties {
 
     public String getImageResolution() {
         return imageResolution;
+    }
+
+    public boolean isPerfectImageEnabled() {
+        return perfectImageEnabled;
+    }
+
+    public void setPerfectImageEnabled(boolean perfectImageEnabled) {
+        this.perfectImageEnabled = perfectImageEnabled;
     }
 
     public void setImageResolution(String imageResolution) {

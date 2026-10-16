@@ -62,6 +62,7 @@ public class FingerprintCaptureService {
     private static final String PROP_AUTOCAPTURE_OVERRIDE_TIME = "AUTOCAPTURE_OVERRIDE_TIME";
     private static final String PROP_AUTOCAPTURE_OVERRIDE_MODE = "AUTOCAPTURE_OVERRIDE_MODE";
     private static final String PROP_AUTOCONTRAST_ON = "AUTOCONTRAST_ON";
+    private static final String PROP_PERFECTIMAGE_ON = "PERFECTIMAGE_ON";
     private static final String PROP_IMAGE_RESOLUTION = "IMAGE_RESOLUTION";
     private static final String PROP_ACTIVE_AREA = "ACTIVE_AREA";
     private static final String PROP_SPOOF_DETECTION_ON = "SPOOF_DETECTION_ON";
@@ -1405,6 +1406,7 @@ public class FingerprintCaptureService {
     private void configureCoreCaptureProperties(String deviceId, String impression) {
         setOptionalProperty(deviceId, PROP_ACTIVE_AREA, properties.getActiveArea());
         setOptionalProperty(deviceId, PROP_IMAGE_RESOLUTION, properties.getImageResolution());
+        setOptionalProperty(deviceId, PROP_PERFECTIMAGE_ON, properties.isPerfectImageEnabled() ? PROP_TRUE : PROP_FALSE);
 
         boolean flatCapture = "FingerprintFlat".equalsIgnoreCase(impression);
         boolean autoContrastEnabled = isPatrolFlatSpeedMode(deviceId, impression)
